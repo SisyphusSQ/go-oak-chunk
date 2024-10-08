@@ -1,0 +1,48 @@
+#---------------------------------------------------------------------------------------------------------------------
+# if debug_mode is true, print debug logs
+debug_mode = true
+# Number of rows to act on in chunks. Zero(0) means all rows updated in one operation.
+# One(1) means update/delete one row everytime.
+# The lower the number, the shorter any locks are held, but the more operations required and the more total running time. (default 1000)
+chunk_size = 10
+# Query to execute, which must contain where clause
+execute_query = "delete from `test` where created_time <= '2023-06-15 00:00:00'"
+# Columns to chunk by. Format: for single column keys, or column1_name,column2_name,...
+forced_chunking_column = ""
+# Do not log to binary log (actions will not replicate).
+# This may be useful if the slave already finds it hard to replicate behind master.
+# The utility may be spawned manually on slave machines, therefore utilizing more than one CPU core on those machines,
+# making replication process faster due to parallelism.
+# no_log_bin = false
+host = "127.0.0.1"
+# TCP/IP port
+port = 3306
+# Database name (required unless table is fully qualified)
+database = "goctest"
+# MySQL user
+user = "root"
+# MySQL password
+password = "xxx"
+# Show number of affected rows during utility runtime
+print_progress = true
+# Number of seconds to sleep random between txnSize if slave is gone wrong. Default: 0
+# if slave check is going well, this value will be floated by slave lag
+sleep = 0
+# true: sleep value will not be overshoot
+# false: if slave lag is very high, sleep will be overshooted
+no_consider_lag = false
+# Do not issue a LOCK TABLES READ. May be required when using queries within --start-with or --end-with
+# skip_lock_tables = false
+# Number of rows per transaction.
+txn_size = 20
+# Pause chunk dml if the slave reach Threshold
+max_lag = 0
+# which slaves should be included, include_slaves and exclude_slaves are mutually exclusive.
+# ex: ip or ip1,ip2,... without port
+include_slaves = ""
+# which slaves should be excluded, include_slaves and exclude_slaves are mutually exclusive.
+# ex: ip or ip1,ip2,... without port
+exclude_slaves = ""
+# don't change this value
+correct = 50
+#---------------------------------------------------------------------------------------------------------------------
