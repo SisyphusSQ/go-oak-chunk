@@ -149,7 +149,7 @@ CREATE TABLE `mybenchx0` (
 | goc              | chunk-size=1000 txn-size=2000  | 211s    | Total Processed Rows: 3713388, speed: 17429.37 rows/s          |
 | goc              | chunk-size=2000 txn-size=4000  | 156s    | Total Processed Rows: 3713388, speed: 23349.05 rows/s          |
 | goc              | chunk-size=3000 txn-size=6000  | 147s    | Total Processed Rows: 3713388, speed: 24748.83 rows/s          |
-| oak-chunk-update | chunk-size=1000                | 288.2s  | awf默认参数                                                        |
+| oak-chunk-update | chunk-size=1000                | 288.2s  | 默认参数                                                           |
 |                  |                                |         | 3713388 accumulating; seconds: 288.2 elapsed; 119.39 executed  |
 | oak-chunk-update | chunk-size=2000                | 207.4s  | 3713388 accumulating; seconds: 207.4 elapsed; 107.46 executed  |
 | oak-chunk-update | chunk-size=3000                | 185.3s  | 3713388 accumulating; seconds: 185.3 elapsed; 104.32 executed  |
@@ -169,7 +169,7 @@ CREATE TABLE `mybenchx0` (
 | goc              | chunk-size=1000 txn-size=2000  | 63s    | Total Processed Rows: 2044230, speed: 30963.93 rows/s         |
 | goc              | chunk-size=2000 txn-size=4000  | 36s    | Total Processed Rows: 2044230, speed: 52393.56 rows/s         |
 | goc              | chunk-size=3000 txn-size=6000  | 27s    | Total Processed Rows: 2044230, speed: 68106.68 rows/s         |
-| oak-chunk-update | chunk-size=1000                | 696.0s | awf默认参数                                                       |
+| oak-chunk-update | chunk-size=1000                | 696.0s | 默认参数                                                          |
 |                  |                                |        | 2044230 accumulating; seconds: 696.0 elapsed; 27.03 executed  |
 | oak-chunk-update | chunk-size=2000                | 353.8s | 2044230 accumulating; seconds: 353.8 elapsed; 18.23 executed  |
 | oak-chunk-update | chunk-size=3000                | 239.2s | 2044230 accumulating; seconds: 239.2 elapsed; 15.33 executed  |
@@ -182,128 +182,128 @@ CREATE TABLE `mybenchx0` (
 
 ### Delete性能测试
 #### RDS压测 数据：3713388 rows（总5448241）
-| 工具               | 参数                             | 耗时     | 备注                                                                                       |
-|------------------|--------------------------------|--------|------------------------------------------------------------------------------------------|
-| goc              | chunk-size=1 txn-size=1000     | /      | 单条数据删除，非范围删除                                                                             |
-|                  |                                |        |                                                                                          |
-| goc              | chunk-size=1000 txn-size=1000  | 334s   | Total Processed Rows: 3713388, speed: 11049.12 rows/s                                    |
-| goc              | chunk-size=1000 txn-size=2000  | 282s   | Total Processed Rows: 3713388, speed: 13026.09 rows/s                                    |
-| goc              | chunk-size=2000 txn-size=4000  | 252s   | Total Processed Rows: 3713388, speed: 14558.70 rows/s                                    |
-| goc              | chunk-size=3000 txn-size=6000  | 246s   | Total Processed Rows: 3713388, speed: 14908.98 rows/s                                    |
-| oak-chunk-update | chunk-size=1000                | 377.1s | 默认参数                                                                                     |
-|                  |                                |        | 3713388 accumulating; seconds: 377.1 elapsed; 153.91 executed                            |
-| oak-chunk-update | chunk-size=2000                | 312.5s | 3713388 accumulating; seconds: 312.5 elapsed; 152.46 executed                            |
-| oak-chunk-update | chunk-size=3000                | 284.5s | 3713388 accumulating; seconds: 284.5 elapsed; 159.96 executed                            |
-| pt-archiver      | limit=1000 txn-size=1000       | 457s   | Started at 2024-02-20T17:01:47, ended at 2024-02-20T17:09:24                             |
-|                  |                                |        | Source: D=migrate_test,P=3306,h=bdrds.xiaotingtest1111.w.qiyi.db,p=...,t=mybenchx0,u=dba |
-|                  |                                |        | SELECT 3713387                                                                           |
-|                  |                                |        | INSERT 0                                                                                 |
-|                  |                                |        | DELETE 3713387                                                                           |
-|                  |                                |        | Action             Count       Time        Pct                                           |
-|                  |                                |        | bulk_deleting       3714   175.9435      38.43                                           |
-|                  |                                |        | select              3715    59.2423      12.94                                           |
-|                  |                                |        | commit              3714    24.2375       5.29                                           |
-|                  |                                |        | other                  0   198.3879      43.33                                           |
-|                  |                                |        |                                                                                          |
-| pt-archiver      | limit=1000 txn-size=2000       | 439s   | Started at 2024-02-20T17:15:00, ended at 2024-02-20T17:22:20                             |
-|                  |                                |        | Source: D=migrate_test,P=3306,h=bdrds.xiaotingtest1111.w.qiyi.db,p=...,t=mybenchx0,u=dba |
-|                  |                                |        | SELECT 3713387                                                                           |
-|                  |                                |        | INSERT 0                                                                                 |
-|                  |                                |        | DELETE 3713387                                                                           |
-|                  |                                |        | Action             Count       Time        Pct                                           |
-|                  |                                |        | bulk_deleting       3714   146.6919      33.40                                           |
-|                  |                                |        | select              3715    65.5630      14.93                                           |
-|                  |                                |        | commit              1857    13.6087       3.10                                           |
-|                  |                                |        | other                  0   213.3417      48.57                                           |
-|                  |                                |        |                                                                                          |
-| pt-archiver      | limit=2000 txn-size=4000       | 422s   | Started at 2024-02-20T17:28:00, ended at 2024-02-20T17:35:02                             |
-|                  |                                |        | Source: D=migrate_test,P=3306,h=bdrds.xiaotingtest1111.w.qiyi.db,p=...,t=mybenchx0,u=dba |
-|                  |                                |        | SELECT 3713387                                                                           |
-|                  |                                |        | INSERT 0                                                                                 |
-|                  |                                |        | DELETE 3713387                                                                           |
-|                  |                                |        | Action             Count       Time        Pct                                           |
-|                  |                                |        | bulk_deleting       1857   162.3538      38.43                                           |
-|                  |                                |        | select              1858    48.0480      11.37                                           |
-|                  |                                |        | commit               929     7.9062       1.87                                           |
-|                  |                                |        | other                  0   204.1619      48.33                                           |
-|                  |                                |        |                                                                                          |
-| pt-archiver      | limit=3000 txn-size=6000       | 410s   | Started at 2024-02-20T17:54:20, ended at 2024-02-20T18:01:11                             |
-|                  |                                |        | Source: D=migrate_test,P=3306,h=bdrds.xiaotingtest1111.w.qiyi.db,p=...,t=mybenchx0,u=dba |
-|                  |                                |        | SELECT 3713387                                                                           |
-|                  |                                |        | INSERT 0                                                                                 |
-|                  |                                |        | DELETE 3713387                                                                           |
-|                  |                                |        | Action             Count       Time        Pct                                           |
-|                  |                                |        | bulk_deleting       1238   161.6140      39.33                                           |
-|                  |                                |        | select              1239    35.6418       8.67                                           |
-|                  |                                |        | commit               619     6.1584       1.50                                           |
-|                  |                                |        | other                  0   207.4860      50.50                                           |
-|                  |                                |        |                                                                                          |
-| goc              | chunk-size=1000 txn-size=2000  | /      | sleep是个(0,1]的浮动值                                                                         |
-|                  | sleep=1(s)                     |        |                                                                                          |
-| oak-chunk-update | chunk-size=1000 sleep=1000(ms) | /      | sleep是个1s定值                                                                              |
+| 工具               | 参数                             | 耗时     | 备注                                                            |
+|------------------|--------------------------------|--------|---------------------------------------------------------------|
+| goc              | chunk-size=1 txn-size=1000     | /      | 单条数据删除，非范围删除                                                  |
+|                  |                                |        |                                                               |
+| goc              | chunk-size=1000 txn-size=1000  | 334s   | Total Processed Rows: 3713388, speed: 11049.12 rows/s         |
+| goc              | chunk-size=1000 txn-size=2000  | 282s   | Total Processed Rows: 3713388, speed: 13026.09 rows/s         |
+| goc              | chunk-size=2000 txn-size=4000  | 252s   | Total Processed Rows: 3713388, speed: 14558.70 rows/s         |
+| goc              | chunk-size=3000 txn-size=6000  | 246s   | Total Processed Rows: 3713388, speed: 14908.98 rows/s         |
+| oak-chunk-update | chunk-size=1000                | 377.1s | 默认参数                                                          |
+|                  |                                |        | 3713388 accumulating; seconds: 377.1 elapsed; 153.91 executed |
+| oak-chunk-update | chunk-size=2000                | 312.5s | 3713388 accumulating; seconds: 312.5 elapsed; 152.46 executed |
+| oak-chunk-update | chunk-size=3000                | 284.5s | 3713388 accumulating; seconds: 284.5 elapsed; 159.96 executed |
+| pt-archiver      | limit=1000 txn-size=1000       | 457s   | Started at 2024-02-20T17:01:47, ended at 2024-02-20T17:09:24  |
+|                  |                                |        | Source: D=test,P=3306,h=127.0.0.1,p=...,t=mybenchx0,u=root    |
+|                  |                                |        | SELECT 3713387                                                |
+|                  |                                |        | INSERT 0                                                      |
+|                  |                                |        | DELETE 3713387                                                |
+|                  |                                |        | Action             Count       Time        Pct                |
+|                  |                                |        | bulk_deleting       3714   175.9435      38.43                |
+|                  |                                |        | select              3715    59.2423      12.94                |
+|                  |                                |        | commit              3714    24.2375       5.29                |
+|                  |                                |        | other                  0   198.3879      43.33                |
+|                  |                                |        |                                                               |
+| pt-archiver      | limit=1000 txn-size=2000       | 439s   | Started at 2024-02-20T17:15:00, ended at 2024-02-20T17:22:20  |
+|                  |                                |        | Source: D=test,P=3306,h=127.0.0.1,p=...,t=mybenchx0,u=root    |
+|                  |                                |        | SELECT 3713387                                                |
+|                  |                                |        | INSERT 0                                                      |
+|                  |                                |        | DELETE 3713387                                                |
+|                  |                                |        | Action             Count       Time        Pct                |
+|                  |                                |        | bulk_deleting       3714   146.6919      33.40                |
+|                  |                                |        | select              3715    65.5630      14.93                |
+|                  |                                |        | commit              1857    13.6087       3.10                |
+|                  |                                |        | other                  0   213.3417      48.57                |
+|                  |                                |        |                                                               |
+| pt-archiver      | limit=2000 txn-size=4000       | 422s   | Started at 2024-02-20T17:28:00, ended at 2024-02-20T17:35:02  |
+|                  |                                |        | Source: D=test,P=3306,h=127.0.0.1,p=...,t=mybenchx0,u=root    |
+|                  |                                |        | SELECT 3713387                                                |
+|                  |                                |        | INSERT 0                                                      |
+|                  |                                |        | DELETE 3713387                                                |
+|                  |                                |        | Action             Count       Time        Pct                |
+|                  |                                |        | bulk_deleting       1857   162.3538      38.43                |
+|                  |                                |        | select              1858    48.0480      11.37                |
+|                  |                                |        | commit               929     7.9062       1.87                |
+|                  |                                |        | other                  0   204.1619      48.33                |
+|                  |                                |        |                                                               |
+| pt-archiver      | limit=3000 txn-size=6000       | 410s   | Started at 2024-02-20T17:54:20, ended at 2024-02-20T18:01:11  |
+|                  |                                |        | Source: D=test,P=3306,h=127.0.0.1,p=...,t=mybenchx0,u=root    |
+|                  |                                |        | SELECT 3713387                                                |
+|                  |                                |        | INSERT 0                                                      |
+|                  |                                |        | DELETE 3713387                                                |
+|                  |                                |        | Action             Count       Time        Pct                |
+|                  |                                |        | bulk_deleting       1238   161.6140      39.33                |
+|                  |                                |        | select              1239    35.6418       8.67                |
+|                  |                                |        | commit               619     6.1584       1.50                |
+|                  |                                |        | other                  0   207.4860      50.50                |
+|                  |                                |        |                                                               |
+| goc              | chunk-size=1000 txn-size=2000  | /      | sleep是个(0,1]的浮动值                                              |
+|                  | sleep=1(s)                     |        |                                                               |
+| oak-chunk-update | chunk-size=1000 sleep=1000(ms) | /      | sleep是个1s定值                                                   |
 
 ![公有云delete性能压测](doc/cloud_delete.png)
 
 #### 私有云压测 数据：2044230 rows（总5405000）
-| 工具               | 参数                             | 耗时     | 备注                                                                               |
-|------------------|--------------------------------|--------|----------------------------------------------------------------------------------|
-| goc              | chunk-size=1 txn-size=1000     | /      | 单条数据删除，非范围删除                                                                     |
-|                  |                                |        |                                                                                  |
-| goc              | chunk-size=1000 txn-size=1000  | 123s   | Total Processed Rows: 2044230, speed: 16219.34 rows/s                            |
-| goc              | chunk-size=1000 txn-size=2000  | 72s    | Total Processed Rows: 2044230, speed: 27248.78 rows/s                            |
-| goc              | chunk-size=2000 txn-size=4000  | 42s    | Total Processed Rows: 2044230, speed: 45407.27 rows/s                            |
-| goc              | chunk-size=3000 txn-size=6000  | 31s    | Total Processed Rows: 2044230, speed: 61923.60 rows/s                            |
-| oak-chunk-update | chunk-size=1000                | 702.4s | 默认参数                                                                             |
-|                  |                                |        | 2043463 accumulating; seconds: 702.4 elapsed; 36.43 executed                     |
-| oak-chunk-update | chunk-size=2000                | 360.9s | 2044230 accumulating; seconds: 360.9 elapsed; 26.77 executed                     |
-| oak-chunk-update | chunk-size=3000                | 248.9s | 2044230 accumulating; seconds: 248.9 elapsed; 23.61 executed                     |
-| pt-archiver      | limit=1000 txn-size=1000       | 93s    | Started at 2024-02-20T18:06:04, ended at 2024-02-20T18:07:37                     |
-|                  |                                |        | Source: D=mysqlio_test,P=2229,h=bj.mysqliotest.w.qiyi.db,p=...,t=mybenchx0,u=dba |
-|                  |                                |        | SELECT 2044230                                                                   |
-|                  |                                |        | INSERT 0                                                                         |
-|                  |                                |        | DELETE 2044230                                                                   |
-|                  |                                |        | Action             Count       Time        Pct                                   |
-|                  |                                |        | bulk_deleting       2045    19.9001      21.25                                   |
-|                  |                                |        | select              2046     7.4088       7.91                                   |
-|                  |                                |        | commit              2045     4.4744       4.78                                   |
-|                  |                                |        | other                  0    61.8726      66.06                                   |
-|                  |                                |        |                                                                                  |
-| pt-archiver      | limit=1000 txn-size=2000       | 88s    | Started at 2024-02-20T18:09:32, ended at 2024-02-20T18:11:00                     |
-|                  |                                |        | Source: D=mysqlio_test,P=2229,h=bj.mysqliotest.w.qiyi.db,p=...,t=mybenchx0,u=dba |
-|                  |                                |        | SELECT 2044230                                                                   |
-|                  |                                |        | INSERT 0                                                                         |
-|                  |                                |        | DELETE 2044230                                                                   |
-|                  |                                |        | Action             Count       Time        Pct                                   |
-|                  |                                |        | bulk_deleting       2045    18.1700      20.60                                   |
-|                  |                                |        | select              2046     6.8679       7.79                                   |
-|                  |                                |        | commit              1023     2.9333       3.33                                   |
-|                  |                                |        | other                  0    60.2291      68.29                                   |
-|                  |                                |        |                                                                                  |
-| pt-archiver      | limit=2000 txn-size=4000       | 82s    | Started at 2024-02-20T18:13:26, ended at 2024-02-20T18:14:48                     |
-|                  |                                |        | Source: D=mysqlio_test,P=2229,h=bj.mysqliotest.w.qiyi.db,p=...,t=mybenchx0,u=dba |
-|                  |                                |        | SELECT 2044230                                                                   |
-|                  |                                |        | INSERT 0                                                                         |
-|                  |                                |        | DELETE 2044230                                                                   |
-|                  |                                |        | Action             Count       Time        Pct                                   |
-|                  |                                |        | bulk_deleting       1023    16.0654      19.45                                   |
-|                  |                                |        | select              1024     5.5288       6.69                                   |
-|                  |                                |        | commit               512     2.1804       2.64                                   |
-|                  |                                |        | other                  0    58.8304      71.22                                   |
-|                  |                                |        |                                                                                  |
-| pt-archiver      | limit=3000 txn-size=6000       | 79s    | Started at 2024-02-20T18:16:42, ended at 2024-02-20T18:18:01                     |
-|                  |                                |        | Source: D=mysqlio_test,P=2229,h=bj.mysqliotest.w.qiyi.db,p=...,t=mybenchx0,u=dba |
-|                  |                                |        | SELECT 2044230                                                                   |
-|                  |                                |        | INSERT 0                                                                         |
-|                  |                                |        | DELETE 2044230                                                                   |
-|                  |                                |        | Action             Count       Time        Pct                                   |
-|                  |                                |        | bulk_deleting        682    15.2692      19.14                                   |
-|                  |                                |        | select               683     4.8427       6.07                                   |
-|                  |                                |        | commit               341     1.8205       2.28                                   |
-|                  |                                |        | other                  0    57.8531      72.51                                   |
-|                  |                                |        |                                                                                  |
-| goc              | chunk-size=1000 txn-size=2000  | /      | sleep是个(0,1]的浮动值                                                                 |
-|                  | sleep=1(s)                     |        |                                                                                  |
-| oak-chunk-update | chunk-size=1000 sleep=1000(ms) | /      | sleep是个1s定值                                                                      |
+| 工具               | 参数                             | 耗时     | 备注                                                           |
+|------------------|--------------------------------|--------|--------------------------------------------------------------|
+| goc              | chunk-size=1 txn-size=1000     | /      | 单条数据删除，非范围删除                                                 |
+|                  |                                |        |                                                              |
+| goc              | chunk-size=1000 txn-size=1000  | 123s   | Total Processed Rows: 2044230, speed: 16219.34 rows/s        |
+| goc              | chunk-size=1000 txn-size=2000  | 72s    | Total Processed Rows: 2044230, speed: 27248.78 rows/s        |
+| goc              | chunk-size=2000 txn-size=4000  | 42s    | Total Processed Rows: 2044230, speed: 45407.27 rows/s        |
+| goc              | chunk-size=3000 txn-size=6000  | 31s    | Total Processed Rows: 2044230, speed: 61923.60 rows/s        |
+| oak-chunk-update | chunk-size=1000                | 702.4s | 默认参数                                                         |
+|                  |                                |        | 2043463 accumulating; seconds: 702.4 elapsed; 36.43 executed |
+| oak-chunk-update | chunk-size=2000                | 360.9s | 2044230 accumulating; seconds: 360.9 elapsed; 26.77 executed |
+| oak-chunk-update | chunk-size=3000                | 248.9s | 2044230 accumulating; seconds: 248.9 elapsed; 23.61 executed |
+| pt-archiver      | limit=1000 txn-size=1000       | 93s    | Started at 2024-02-20T18:06:04, ended at 2024-02-20T18:07:37 |
+|                  |                                |        | Source: D=test,P=3306,h=127.0.0.1,p=...,t=mybenchx0,u=root   |
+|                  |                                |        | SELECT 2044230                                               |
+|                  |                                |        | INSERT 0                                                     |
+|                  |                                |        | DELETE 2044230                                               |
+|                  |                                |        | Action             Count       Time        Pct               |
+|                  |                                |        | bulk_deleting       2045    19.9001      21.25               |
+|                  |                                |        | select              2046     7.4088       7.91               |
+|                  |                                |        | commit              2045     4.4744       4.78               |
+|                  |                                |        | other                  0    61.8726      66.06               |
+|                  |                                |        |                                                              |
+| pt-archiver      | limit=1000 txn-size=2000       | 88s    | Started at 2024-02-20T18:09:32, ended at 2024-02-20T18:11:00 |
+|                  |                                |        | Source: D=test,P=3306,h=127.0.0.1,p=...,t=mybenchx0,u=root   |
+|                  |                                |        | SELECT 2044230                                               |
+|                  |                                |        | INSERT 0                                                     |
+|                  |                                |        | DELETE 2044230                                               |
+|                  |                                |        | Action             Count       Time        Pct               |
+|                  |                                |        | bulk_deleting       2045    18.1700      20.60               |
+|                  |                                |        | select              2046     6.8679       7.79               |
+|                  |                                |        | commit              1023     2.9333       3.33               |
+|                  |                                |        | other                  0    60.2291      68.29               |
+|                  |                                |        |                                                              |
+| pt-archiver      | limit=2000 txn-size=4000       | 82s    | Started at 2024-02-20T18:13:26, ended at 2024-02-20T18:14:48 |
+|                  |                                |        | Source: D=test,P=3306,h=127.0.0.1,p=...,t=mybenchx0,u=root   |
+|                  |                                |        | SELECT 2044230                                               |
+|                  |                                |        | INSERT 0                                                     |
+|                  |                                |        | DELETE 2044230                                               |
+|                  |                                |        | Action             Count       Time        Pct               |
+|                  |                                |        | bulk_deleting       1023    16.0654      19.45               |
+|                  |                                |        | select              1024     5.5288       6.69               |
+|                  |                                |        | commit               512     2.1804       2.64               |
+|                  |                                |        | other                  0    58.8304      71.22               |
+|                  |                                |        |                                                              |
+| pt-archiver      | limit=3000 txn-size=6000       | 79s    | Started at 2024-02-20T18:16:42, ended at 2024-02-20T18:18:01 |
+|                  |                                |        | Source: D=test,P=3306,h=127.0.0.1,p=...,t=mybenchx0,u=root   |
+|                  |                                |        | SELECT 2044230                                               |
+|                  |                                |        | INSERT 0                                                     |
+|                  |                                |        | DELETE 2044230                                               |
+|                  |                                |        | Action             Count       Time        Pct               |
+|                  |                                |        | bulk_deleting        682    15.2692      19.14               |
+|                  |                                |        | select               683     4.8427       6.07               |
+|                  |                                |        | commit               341     1.8205       2.28               |
+|                  |                                |        | other                  0    57.8531      72.51               |
+|                  |                                |        |                                                              |
+| goc              | chunk-size=1000 txn-size=2000  | /      | sleep是个(0,1]的浮动值                                             |
+|                  | sleep=1(s)                     |        |                                                              |
+| oak-chunk-update | chunk-size=1000 sleep=1000(ms) | /      | sleep是个1s定值                                                  |
 
 ![私有云delete性能压测](doc/private_delete.png)
 
