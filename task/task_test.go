@@ -2,10 +2,13 @@ package task
 
 import (
 	"fmt"
-	"github.com/fatih/color"
 	"math/rand"
 	"testing"
 	"time"
+
+	"github.com/fatih/color"
+
+	"go-oak-chunk/v2/conf"
 )
 
 func TestRunTask(t *testing.T) {
