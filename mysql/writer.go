@@ -232,7 +232,8 @@ func (w *Writer) getInfoFromTable(c *conf.Config) error {
 	}
 
 	if v.whereClause != "" {
-		w.OriginWhereClause = v.whereClause
+		// avoid where clause "or", make program confused
+		w.OriginWhereClause = fmt.Sprintf("(%s)", v.whereClause)
 		log.StreamLogger.Debug("originWhereClause: [%s]", v.whereClause)
 	}
 
