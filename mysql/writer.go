@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -142,8 +143,9 @@ func (w *Writer) Write(bucket *ratelimit.Bucket, bucketNum chan int64, wg *sync.
 			execSql := w.ExecuteSQL + pr.WhereClause
 			values := getColumnValue(pr.CurrentKeyValues, w.ChunkSize)
 
+			log.StreamLogger.Debug("execSql: %s", execSql)
 			log.StreamLogger.Debug("parma values: %v", values)
-			//log.StreamLogger.Debug("execSql: %s", execSql)
+
 			res, errEx := tx.Exec(execSql, values...)
 			if errEx != nil {
 				// 重试机制 todo 重写一个方法
@@ -223,9 +225,15 @@ func (w *Writer) getInfoFromTable(c *conf.Config) error {
 	case *ast.DeleteStmt:
 		w.SqlType = "Delete"
 		node.Accept(v)
+
+		w.ExecuteSQL = fmt.Sprintf("DELETE FROM `%s` WHERE ", w.Table)
 	case *ast.UpdateStmt:
 		w.SqlType = "Update"
 		node.Accept(v)
+
+		re := regexp.MustCompile(`set.*where|SET.*WHERE|set.*WHERE|SET.*where`)
+		sub := re.FindString(c.ExecuteQuery)
+		w.ExecuteSQL = fmt.Sprintf("UPDATE `%s` %s ", w.Table, sub)
 	default:
 		log.StreamLogger.Error("please confirm sql type is `update` or `delete`")
 		os.Exit(1)
@@ -235,6 +243,8 @@ func (w *Writer) getInfoFromTable(c *conf.Config) error {
 		// avoid where clause "or", make program confused
 		w.OriginWhereClause = fmt.Sprintf("(%s)", v.whereClause)
 		log.StreamLogger.Debug("originWhereClause: [%s]", v.whereClause)
+
+		w.ExecuteSQL += w.OriginWhereClause
 	}
 
 	// Second find primary/unique index which can be used

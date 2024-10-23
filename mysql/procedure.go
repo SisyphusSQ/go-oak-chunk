@@ -75,7 +75,7 @@ func (p *Procedure) BuildSQL(producer chan *Producer, wg *sync.WaitGroup) error 
 		// index can't be not unique
 		execWhere = BuildBulkExecWhereClause(p.unqKeys)
 	} else {
-		execWhere = fmt.Sprintf(" AND (%s) AND (%s) limit %d", conditions[">="], conditions["<="], p.ChunkSize)
+		execWhere = fmt.Sprintf(" AND (%s AND %s) limit %d", conditions[">="], conditions["<="], p.ChunkSize)
 	}
 
 	log.StreamLogger.Debug("firstSql: [%s]", firstSql)
