@@ -59,7 +59,7 @@ var runCmd = &cobra.Command{
 		if configPath != "" {
 			config, err = conf.NewConfig(configPath)
 			if err != nil {
-				log.GlobalLogger.Error(err.Error())
+				log.StreamLogger.Error(err.Error())
 				return err
 			}
 		} else {
@@ -109,7 +109,7 @@ var runCmd = &cobra.Command{
 		// run task
 		err = task.RunTask(config)
 		if err != nil {
-			log.GlobalLogger.Error(err.Error())
+			log.StreamLogger.Error(err.Error())
 			return err
 		}
 
@@ -148,12 +148,12 @@ func StartCpuProfile() *os.File {
 	if cpuprofile != "" {
 		f, err := os.Create(cpuprofile)
 		if err != nil {
-			log.GlobalLogger.Fatal("could not create CPU profile: ", err)
+			log.StreamLogger.Fatal("could not create CPU profile: ", err)
 		}
 		if err := pprof.StartCPUProfile(f); err != nil {
-			log.GlobalLogger.Fatal("could not start CPU profile: ", err)
+			log.StreamLogger.Fatal("could not start CPU profile: ", err)
 		}
-		log.GlobalLogger.Info("cpu pprof start ...")
+		log.StreamLogger.Info("cpu pprof start ...")
 		return f
 	}
 	return nil
@@ -163,7 +163,7 @@ func StopCpuProfile(f *os.File) {
 	if f != nil {
 		pprof.StopCPUProfile()
 		f.Close()
-		log.GlobalLogger.Info("cpu pprof stopped [file=%s]!", cpuprofile)
+		log.StreamLogger.Info("cpu pprof stopped [file=%s]!", cpuprofile)
 		return
 	}
 }
@@ -172,13 +172,13 @@ func MemProfile() {
 	if memprofile != "" {
 		f, err := os.Create(memprofile)
 		if err != nil {
-			log.GlobalLogger.Fatal("could not create memory profile: ", err)
+			log.StreamLogger.Fatal("could not create memory profile: ", err)
 		}
 		defer f.Close()
 		runtime.GC() // get up-to-date statistics
 		if err := pprof.WriteHeapProfile(f); err != nil {
-			log.GlobalLogger.Fatal("could not write memory profile: ", err)
+			log.StreamLogger.Fatal("could not write memory profile: ", err)
 		}
-		log.GlobalLogger.Info("mem pprof done [file=%s]!", memprofile)
+		log.StreamLogger.Info("mem pprof done [file=%s]!", memprofile)
 	}
 }
