@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"sync"
@@ -232,10 +233,13 @@ func PrintProgress(config *conf.Config, writer *mysql.Writer, interval time.Dura
 	start := time.Now()
 	print("\033[2J\033[H") // clear screen and move the cursor to the top-left corner of the screen
 	// clear screen
-	screenHeight := getScreenHeight()
-	for i := 1; i <= screenHeight; i++ {
-		fmt.Printf("\033[%d;1H\033[K", i)
+	screenHeight, err := getScreenHeight()
+	if err == nil {
+		for i := 1; i <= screenHeight; i++ {
+			fmt.Printf("\033[%d;1H\033[K", i)
+		}
 	}
+
 	// fixed part
 	print("\033[H")
 	print(color.CyanString("[Execute SQL]: "))
@@ -269,7 +273,14 @@ func PrintProgress(config *conf.Config, writer *mysql.Writer, interval time.Dura
 	}
 }
 
-func getScreenHeight() (height int) {
+func getScreenHeight() (height int, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.GlobalLogger.Error("Recovered from panic in getScreenHeight: %v", r)
+			err = errors.New("panic in getScreenHeight")
+		}
+	}()
+
 	// set a default value for height
 	height = 40
 	screen, err := tcell.NewScreen()
@@ -277,7 +288,7 @@ func getScreenHeight() (height int) {
 		return
 	}
 	defer screen.Fini()
-	if err := screen.Init(); err != nil {
+	if err = screen.Init(); err != nil {
 		return
 	}
 	_, height = screen.Size()
