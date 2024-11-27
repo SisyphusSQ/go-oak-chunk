@@ -179,24 +179,24 @@ func getStopTime(sl *lag_checker.SlaveChecker, bucketNum chan int64, c *conf.Con
 //
 // 为了避免逻辑混乱，使用者在用了sleep参数后，会进行(c.sleep-1, c.sleep]的sleep时间
 func bucketHandle(lag int64, c *conf.Config) int64 {
-	x := c.Sleep * 1000
+	x := c.Sleep / 1000
 	if lag == 0 && c.Sleep > 0 {
-		return rand.Int63n(x-(x-1000)) + (x - 1000)
+		return rand.Int63n(c.Sleep-(c.Sleep-1000)) + (c.Sleep - 1000)
 	} else if lag == 0 && c.Sleep == 0 {
 		return 0
 	} else {
 		if c.NoConsiderLag {
-			if lag <= c.Sleep {
+			if lag <= x {
 				return lag * 1000
 			} else {
-				return x
+				return c.Sleep
 			}
 		} else {
-			if lag <= c.Sleep || lag+60 <= c.Sleep {
+			if lag <= x || lag+60 <= x {
 				return lag * 1000
 			} else { // slaveLag > c.Sleep && slaveLag-c.Sleep > 60*n
-				plus := (lag - c.Sleep) / 60
-				return (c.Sleep + plus) * 1000
+				plus := (lag - x) / 60
+				return (x + plus) * 1000
 			}
 		}
 	}

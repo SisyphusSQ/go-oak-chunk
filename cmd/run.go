@@ -134,7 +134,7 @@ func initRun() {
 	runCmd.Flags().StringVar(&excludeSlaves, "exclude-slaves", "", "which slaves should be include, include_slaves and exclude_slaves are mutually exclusive.\nex: ip or ip1,ip2,... without port")
 	//runCmd.Flags().BoolVar(&noLogBin, "no-log-bin", false, "Do not log to binary log (actions will not replicate). This may be useful if the slave already finds it hard to replicate behind master. The utility may be spawned manually on slave machines, therefore utilizing more than one CPU core on those machines, making replication process faster due to parallelism.")
 	runCmd.Flags().BoolVar(&printProgress, "print-progress", false, "Show number of affected rows during utility runtime")
-	runCmd.Flags().Int64Var(&sleep, "sleep", 0, "Number of seconds to sleep between chunks.")
+	runCmd.Flags().Int64Var(&sleep, "sleep", 0, "Number of milliseconds to sleep between chunks.")
 	runCmd.Flags().BoolVar(&noConsiderLag, "noConsiderLag", false, "If true: sleep value will not be overshoot\nfalse: if slave lag is very high, sleep will be overshoot")
 	//runCmd.Flags().BoolVar(&skipLockTables, "skip-lock-tables", false, "Do not issue a LOCK TABLES READ. May be required when using queries within --start-with or --end-with")
 	runCmd.Flags().StringVarP(&database, "database", "d", "", "Database name (required unless table is fully qualified)")
