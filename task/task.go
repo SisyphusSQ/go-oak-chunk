@@ -177,10 +177,16 @@ func getStopTime(sl *lag_checker.SlaveChecker, bucketNum chan int64, c *conf.Con
 //
 //	实际等待时间最大为c.Sleep
 //
-// 为了避免逻辑混乱，使用者在用了sleep参数后，会进行(c.sleep-1, c.sleep]的sleep时间
+// 为了避免逻辑混乱，
+//
+//	使用者在用了sleep参数后，会进行(c.sleep-1, c.sleep]的sleep时间
+//	如果sleep参数的值小于1s，会进行[0, c.sleep)的sleep时间
 func bucketHandle(lag int64, c *conf.Config) int64 {
 	x := c.Sleep / 1000
 	if lag == 0 && c.Sleep > 0 {
+		if c.Sleep < 1000 {
+			return rand.Int63n(c.Sleep)
+		}
 		return rand.Int63n(c.Sleep-(c.Sleep-1000)) + (c.Sleep - 1000)
 	} else if lag == 0 && c.Sleep == 0 {
 		return 0
