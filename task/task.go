@@ -184,7 +184,7 @@ func getStopTime(sl *lag_checker.SlaveChecker, bucketNum chan int64, c *conf.Con
 func bucketHandle(lag int64, c *conf.Config) int64 {
 	x := c.Sleep / 1000
 	if lag == 0 && c.Sleep > 0 {
-		if c.Sleep < 1000 {
+		if c.Sleep <= 1000 {
 			return rand.Int63n(c.Sleep)
 		}
 		return rand.Int63n(c.Sleep-(c.Sleep-1000)) + (c.Sleep - 1000)
