@@ -27,9 +27,13 @@ func RunTask(config *conf.Config) error {
 		log.StreamLogger.Debug("config json: %s", string(configJson))
 	}
 
-	var wg sync.WaitGroup
-	bucketNum := make(chan int64, 1000)
-	bucket := ratelimit.NewBucketWithQuantum(1*time.Millisecond, 1, 1)
+	var (
+		wg                    sync.WaitGroup
+		ctx, cancel           = context.WithCancel(context.Background())
+		printProgressDoneChan = make(chan struct{})
+		bucketNum             = make(chan int64, 1000)
+		bucket                = ratelimit.NewBucketWithQuantum(1*time.Millisecond, 1, 1)
+	)
 
 	// 1. 创建执行SQL的协程
 	// 包含预检查
@@ -51,7 +55,7 @@ func RunTask(config *conf.Config) error {
 
 	// 4. read
 	readErrChan := make(chan error)
-	p := mysql.NewProcedure(w)
+	p := mysql.NewProcedure(ctx, w)
 	wg.Add(1)
 	go func() {
 		// equals to read goroutine
@@ -73,8 +77,6 @@ func RunTask(config *conf.Config) error {
 	}()
 
 	// 6. if verbose
-	ctx, cancel := context.WithCancel(context.Background())
-	printProgressDoneChan := make(chan struct{})
 	if config.PrintProgress {
 		go PrintProgress(config, w, 3*time.Second, ctx, printProgressDoneChan)
 	}
@@ -91,16 +93,17 @@ func RunTask(config *conf.Config) error {
 			}
 		case writeErr := <-writeErrChan:
 			if writeErr != nil {
-				Close(sl, w, bucketNum)
 				cancel()
+				Close(sl, w, bucketNum)
 				return writeErr
 			} else {
 				continue
 			}
 		case <-tasksDoneChan:
-			Close(sl, w, bucketNum)
 			// tell PrintProgress to stop
 			cancel()
+			Close(sl, w, bucketNum)
+
 			// confirm PrintProgress stopped
 			if config.PrintProgress {
 				<-printProgressDoneChan
@@ -179,7 +182,7 @@ func getStopTime(sl *lag_checker.SlaveChecker, bucketNum chan int64, c *conf.Con
 //
 // 为了避免逻辑混乱，
 //
-//	使用者在用了sleep参数后，会进行(c.sleep-1, c.sleep]的sleep时间
+//	使用者在用了sleep参数后，会进行(c.sleep-1000, c.sleep]的sleep时间
 //	如果sleep参数的值小于1s，会进行[0, c.sleep)的sleep时间
 func bucketHandle(lag int64, c *conf.Config) int64 {
 	x := c.Sleep / 1000

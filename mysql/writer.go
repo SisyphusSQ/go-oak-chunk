@@ -1,6 +1,7 @@
 package mysql
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -110,6 +111,7 @@ func (w *Writer) preCheck(c *conf.Config) {
 
 func (w *Writer) Write(bucket *ratelimit.Bucket, bucketNum chan int64, wg *sync.WaitGroup) error {
 	maxRetry := 3
+
 	for {
 		// get last bucket number
 		var bucketCount int64
@@ -149,21 +151,24 @@ func (w *Writer) Write(bucket *ratelimit.Bucket, bucketNum chan int64, wg *sync.
 			res, errEx := tx.Exec(execSql, values...)
 			if errEx != nil {
 				// 重试机制 todo 重写一个方法
+				var errEx2 error
 				for i := 0; i < maxRetry; i++ {
-					tx, errEx = w.MysqlClient.Begin()
-					if errEx != nil {
-						return errEx
+					tx, errEx2 = w.MysqlClient.Begin()
+					if errEx2 != nil {
+						return errEx2
 					}
 
-					res, errEx = tx.Exec(execSql, values...)
-					if errEx != nil {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					res, errEx2 = tx.ExecContext(ctx, execSql, values...)
+					cancel()
+					if errEx2 != nil {
 						continue
 					} else {
 						break
 					}
 				}
 
-				if errEx != nil {
+				if errEx2 != nil {
 					return errEx
 				}
 			}

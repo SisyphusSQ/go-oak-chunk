@@ -1,6 +1,7 @@
 package mysql
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -11,12 +12,15 @@ import (
 )
 
 type Procedure struct {
-	MysqlClient       *sql.DB
-	ChunkSize         int64
+	ctx context.Context
+
 	originWhereClause string
 	database          string
 	table             string
 	unqKeys           *UnqKeys
+
+	MysqlClient *sql.DB
+	ChunkSize   int64
 }
 
 type KeyValue struct {
@@ -24,8 +28,9 @@ type KeyValue struct {
 	ColumnValue any
 }
 
-func NewProcedure(w *Writer) *Procedure {
+func NewProcedure(ctx context.Context, w *Writer) *Procedure {
 	return &Procedure{
+		ctx:               ctx,
 		MysqlClient:       w.MysqlClient,
 		ChunkSize:         w.ChunkSize,
 		originWhereClause: w.OriginWhereClause,
@@ -178,7 +183,8 @@ func (p *Procedure) BuildSQL(producer chan *Producer, wg *sync.WaitGroup) error 
 			}
 
 			selectKeyCols = keyValues[len(keyValues)-len(p.unqKeys.UniqueKeyColumns):]
-		} else { // if p.ChunkSize == 1
+		} else {
+			// if p.ChunkSize == 1
 			//log.StreamLogger.Debug("fetchSql: %s", fetchSql)
 			rows, err := p.MysqlClient.Query(fetchSql, args...)
 			if err != nil {
@@ -222,6 +228,13 @@ func (p *Procedure) BuildSQL(producer chan *Producer, wg *sync.WaitGroup) error 
 			}
 
 			selectKeyCols = keyValues
+		}
+
+		select {
+		case <-p.ctx.Done():
+			return nil
+		default:
+			// do nothing
 		}
 	}
 }

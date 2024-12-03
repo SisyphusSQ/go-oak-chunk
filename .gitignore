@@ -11,3 +11,5 @@ coverage.out
 goc*
 *.log
 *.exe
+
+conf/example.toml
