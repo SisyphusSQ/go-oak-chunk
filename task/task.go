@@ -85,8 +85,8 @@ func RunTask(config *conf.Config) error {
 		select {
 		case readErr := <-readErrChan:
 			if readErr != nil {
-				Close(sl, w, bucketNum)
 				cancel()
+				Close(sl, w, bucketNum)
 				return readErr
 			} else {
 				continue
@@ -230,6 +230,10 @@ func Close(sl *lag_checker.SlaveChecker, w *mysql.Writer, bucketNum chan int64) 
 			_ = slave.MysqlClient.Close()
 		}
 	}
+
+	// wait Procedure.BuildSQL quiet
+	time.Sleep(10 * time.Millisecond)
+
 	w.MysqlClient.Close()
 	close(w.ProducerQueue)
 	close(bucketNum)
