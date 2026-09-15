@@ -1,3 +1,8 @@
+### v3.4.1(20260915)
+#### bugFix:
+1. 修复 TiDB parser 解析 `SHOW CREATE TABLE` 时，非主键列使用 `utf16` 字符集或相关排序规则导致 `Unknown character set`、表结构预检失败的问题；在包初始化阶段注册 parser 已有的 UTF-16 字符集元数据，字符比较仍由数据库执行（`mysql/charset.go`）
+   - 补充混合字符集、字符集名称大小写、显式排序规则、主键识别、生成 DML 和未知字符集拒绝测试（`mysql/charset_test.go`）
+
 ### v3.4.0(20260826)
 #### feature:
 1. CLI 与 SDK 支持从单表 `UPDATE`/`DELETE` 的全限定 `schema.table` 推断目标库，省略 `--database`/`Config.Database` 时会统一使用并回填 SQL schema
