@@ -99,6 +99,7 @@ go run ./cmd/go-oak-chunk run --help
 | `--exclude-slaves` | string / 空 | 否 | 排除这些从库 IP（逗号分隔） | 与 `--include-slaves` 互斥 |
 | `--no-slaves` | bool / `false` | 否 | 跳过从库延迟检测 | TiDB/OceanBase 场景常用 |
 | `--print-progress` | bool / `false` | 否 | 控制台打印进度 | 每 3 秒刷新 |
+| `--no-progress-bar` | bool / `false` | 否 | 纯日志模式，关闭终端进度显示 | 优先于 `--print-progress` 和 TOML 的 `print_progress` |
 | `--debug` | bool / `false` | 否 | 打开 debug 日志 | |
 | `--rows-per-sec` | int64 / `0` | 否 | 全局每秒行数上限 | `0` 表示不限速；与 `--sleep`/`--max-lag` 叠加生效 |
 | `--select-order-by` | string / 空 | 否 | 两阶段候选 SELECT 的排序列（逗号分隔） | 开启覆盖索引快路径（仅 DELETE）；`--partition-concurrency` 的前置条件 |
@@ -111,6 +112,12 @@ go run ./cmd/go-oak-chunk run --help
 | `--dry-run` | bool / `false` | 否 | 只打印样例 SQL，不实际执行 | 用于预览快路径 SELECT/DELETE 形态 |
 | `--preflight-threshold` | int64 / `0` | 否 | EXPLAIN 预估大表确认阈值 | `0` 表示用默认值 `100000` |
 | `--yes` | bool / `false` | 否 | 跳过大表确认交互 | SDK/非交互场景建议开启 |
+
+脚本收集输出时，使用 `--no-progress-bar` 关闭终端进度显示，保留正常运行及失败日志，避免进度显示产生的清屏、光标移动和终端初始化。即使同时传入 `--print-progress`，或配置文件设置了 `print_progress = true`，仍以 `--no-progress-bar` 为准，与参数顺序无关。`--no-progress-bar=false` 不覆盖原有进度设置。该选项不改变退出码或大表确认行为。
+
+```bash
+./goc run -c /path/to/example.toml --no-progress-bar
+```
 
 ---
 
@@ -128,6 +135,7 @@ go run ./cmd/go-oak-chunk run --help
 
 - 业务参数来自 TOML（如 chunk、SQL、连接信息等）
 - `--cpuprofile` / `--memprofile` 仍由命令行控制
+- `--no-progress-bar` 仍生效，可强制关闭 TOML 中开启的进度显示
 
 可理解为“配置文件模式优先”。
 

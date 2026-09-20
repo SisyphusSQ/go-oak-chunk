@@ -37,6 +37,7 @@ var (
 	password      string
 	port          int
 	printProgress bool
+	noProgressBar bool
 	sleep         int64
 	//skipLockTables bool
 
@@ -70,57 +71,9 @@ var runCmd = &cobra.Command{
 	Long:    `Start chunk dml`,
 	Example: fmt.Sprintf("%s run -c --config <config file>\n", vars.AppName),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// parse configuration file or cmd line
-		var (
-			config *conf.Config
-			err    error
-		)
-		if configPath != "" {
-			config, err = conf.NewConfig(configPath)
-			if err != nil {
-				log.Logger.Errorf("failed to load config [path=%s]: %v", configPath, err)
-				return err
-			}
-		} else {
-			config = &conf.Config{
-				ChunkSize:           chunkSize,
-				ExecuteQuery:        executeQuery,
-				ForceChunkingColumn: forceChunkingColumn,
-				Host:                host,
-				//NoLogBin:            noLogBin,
-				User:          user,
-				Password:      password,
-				Port:          port,
-				PrintProgress: printProgress,
-				Sleep:         sleep,
-				MaxLag:        maxLag,
-				IncludeSlaves: includeSlaves,
-				ExcludeSlaves: excludeSlaves,
-				NoSlaves:      noSlaves,
-				//SkipLockTables: skipLockTables,
-				Database:      database,
-				Debug:         debug,
-				NoConsiderLag: noConsiderLag,
-				TxnSize:       txnSize,
-				RowsPerSec:    rowsPerSec,
-				Correct:       50,
-
-				SelectIndex:        selectIndex,
-				SelectOrderBy:      selectOrderBy,
-				SelectCursor:       selectCursor,
-				MaxRows:            maxRows,
-				MaxDuration:        maxDurationMs,
-				DryRun:             dryRun,
-				PreflightThreshold: preflightThreshold,
-				AutoConfirm:        autoConfirm,
-
-				PartitionConcurrency: partitionConcurrency,
-				TiDBRowID:            tidbRowID,
-			}
-			if err = config.PreCheck(); err != nil {
-				log.Logger.Errorf("config precheck failed [host=%s, database=%s]: %v", host, database, err)
-				return err
-			}
+		config, err := loadRunConfig()
+		if err != nil {
+			return err
 		}
 
 		if err = log.New(config.Debug, log.OutputStderr); err != nil {
@@ -169,6 +122,66 @@ var runCmd = &cobra.Command{
 	},
 }
 
+func loadRunConfig() (*conf.Config, error) {
+	// parse configuration file or cmd line
+	var (
+		config *conf.Config
+		err    error
+	)
+	if configPath != "" {
+		config, err = conf.NewConfig(configPath)
+		if err != nil {
+			log.Logger.Errorf("failed to load config [path=%s]: %v", configPath, err)
+			return nil, err
+		}
+	} else {
+		config = &conf.Config{
+			ChunkSize:           chunkSize,
+			ExecuteQuery:        executeQuery,
+			ForceChunkingColumn: forceChunkingColumn,
+			Host:                host,
+			//NoLogBin:            noLogBin,
+			User:          user,
+			Password:      password,
+			Port:          port,
+			PrintProgress: printProgress,
+			Sleep:         sleep,
+			MaxLag:        maxLag,
+			IncludeSlaves: includeSlaves,
+			ExcludeSlaves: excludeSlaves,
+			NoSlaves:      noSlaves,
+			//SkipLockTables: skipLockTables,
+			Database:      database,
+			Debug:         debug,
+			NoConsiderLag: noConsiderLag,
+			TxnSize:       txnSize,
+			RowsPerSec:    rowsPerSec,
+			Correct:       50,
+
+			SelectIndex:        selectIndex,
+			SelectOrderBy:      selectOrderBy,
+			SelectCursor:       selectCursor,
+			MaxRows:            maxRows,
+			MaxDuration:        maxDurationMs,
+			DryRun:             dryRun,
+			PreflightThreshold: preflightThreshold,
+			AutoConfirm:        autoConfirm,
+
+			PartitionConcurrency: partitionConcurrency,
+			TiDBRowID:            tidbRowID,
+		}
+		if err = config.PreCheck(); err != nil {
+			log.Logger.Errorf("config precheck failed [host=%s, database=%s]: %v", host, database, err)
+			return nil, err
+		}
+	}
+	// This output override also applies when business options come from TOML.
+	if noProgressBar {
+		config.PrintProgress = false
+	}
+	return config, nil
+}
+
 func initRun() {
 	runCmd.Flags().StringVarP(&configPath, "config", "c", "", "config file path")
 	runCmd.Flags().StringVar(&cpuprofile, "cpuprofile", "", "write cpu profile to `file`")
@@ -185,6 +198,7 @@ func initRun() {
 	runCmd.Flags().BoolVar(&noSlaves, "no-slaves", false, "If true: don't calculate lags on slaves")
 	//runCmd.Flags().BoolVar(&noLogBin, "no-log-bin", false, "Do not log to binary log (actions will not replicate). This may be useful if the slave already finds it hard to replicate behind master. The utility may be spawned manually on slave machines, therefore utilizing more than one CPU core on those machines, making replication process faster due to parallelism.")
 	runCmd.Flags().BoolVar(&printProgress, "print-progress", false, "Show number of affected rows during utility runtime")
+	runCmd.Flags().BoolVar(&noProgressBar, "no-progress-bar", false, "Use log-only output without terminal progress display; overrides --print-progress and config print_progress")
 	runCmd.Flags().Int64Var(&sleep, "sleep", 0, "Number of milliseconds to sleep between chunks.")
 	runCmd.Flags().BoolVar(&noConsiderLag, "noConsiderLag", false, "If true: sleep value will not be overshoot\nfalse: if slave lag is very high, sleep will be overshoot")
 	//runCmd.Flags().BoolVar(&skipLockTables, "skip-lock-tables", false, "Do not issue a LOCK TABLES READ. May be required when using queries within --start-with or --end-with")

@@ -433,10 +433,16 @@ func getScreenHeight() (height int, err error) {
 	if err != nil {
 		return
 	}
-	defer screen.Fini()
+	return screenHeight(screen)
+}
+
+func screenHeight(screen tcell.Screen) (height int, err error) {
+	height = 40
 	if err = screen.Init(); err != nil {
 		return
 	}
+	// tcell's shutdown channel is only created after successful initialization.
+	defer screen.Fini()
 	_, height = screen.Size()
 	return
 }
