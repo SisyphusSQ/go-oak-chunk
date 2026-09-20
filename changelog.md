@@ -1,3 +1,12 @@
+### v3.4.2(20260920)
+#### feature:
+1. 新增 `--no-progress-bar` 纯日志模式，关闭终端进度显示，保留正常运行及失败日志；优先于 `--print-progress` 和 TOML 中的 `print_progress = true`，与参数顺序无关
+   - 显式设置 `--no-progress-bar=false` 时保留原有进度设置，不改变退出码和大表确认行为
+
+#### bugFix:
+1. 修复终端初始化失败后调用 `screen.Fini()` 导致 `close of nil channel` panic 的问题；仅在初始化成功后清理，避免无害的 ERROR 日志掩盖实际执行失败原因
+   - 补充初始化失败/成功的生命周期回归测试，以及 CLI/TOML 进度参数优先级测试
+
 ### v3.4.1(20260915)
 #### bugFix:
 1. 修复 TiDB parser 解析 `SHOW CREATE TABLE` 时，非主键列使用 `utf16` 字符集或相关排序规则导致 `Unknown character set`、表结构预检失败的问题；在包初始化阶段注册 parser 已有的 UTF-16 字符集元数据，字符比较仍由数据库执行（`mysql/charset.go`）
