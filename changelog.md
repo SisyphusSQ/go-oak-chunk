@@ -1,3 +1,13 @@
+### v3.5.0(20261020)
+#### feature:
+1. 新增可选受控清理 SDK `NewControlledExecutor`：借用调用方持锁的单个 `sql.Conn`，按整数主键串行选取候选并分批 DELETE；不创建连接、不自动发现从库、不自动重试，不改变原有 `NewExecutor` 行为。
+2. 必需的同步 `BeforeStatement` / `AfterCommit` hooks 支持调用方在每批写入前校验审批与租约、提交后记录累计结果；固定 UTC 截止时间、剩余行额度、行速率、整体和语句时限共同约束执行。
+3. 增加取消与本地退出等待、提交/回滚结果不明标记和错误脱敏；连接关闭、服务端停止证明、元数据准入及业务审批仍由调用方负责。
+   - 受控入口无 dry-run，调用 `Run` 会实际删除；使用前须完成独立只读预检。详见 `doc/design/controlled-sdk.md`。
+
+#### test:
+1. 使用无网络合成 SQL driver 覆盖严格预算、signed/unsigned BIGINT 参数、门禁时限、提交回执、未知结果不重试、取消/等待与 panic 脱敏；不代表真实 MySQL 验收。
+
 ### v3.4.2(20260920)
 #### feature:
 1. 新增 `--no-progress-bar` 纯日志模式，关闭终端进度显示，保留正常运行及失败日志；优先于 `--print-progress` 和 TOML 中的 `print_progress = true`，与参数顺序无关
