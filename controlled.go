@@ -169,6 +169,11 @@ func (e *ControlledExecutor) Run(ctx context.Context) (result ControlledResult, 
 			return e.failure(result, ControlledFailed, "receipt", false)
 		}
 		lastID = ids[len(ids)-1]
+		// The row budget is already satisfied. A rate-limit wait here can outlive
+		// the run context and would report timeout or cancel for a finished delete.
+		if result.CommittedRows >= e.cfg.MaxRows {
+			break
+		}
 		delay := time.Duration(affected) * time.Second / time.Duration(e.cfg.RowsPerSec)
 		timer := time.NewTimer(delay)
 		select {
@@ -182,9 +187,16 @@ func (e *ControlledExecutor) Run(ctx context.Context) (result ControlledResult, 
 	return result, nil
 }
 
+// cutoffArg is the approved UTC wall time. Bind a datetime literal rather than
+// time.Time: go-sql-driver reformats time.Time in the DSN loc before sending,
+// which moves the comparison off the UTC cutoff when loc is not UTC.
+func (e *ControlledExecutor) cutoffArg() string {
+	return e.cfg.CutoffUTC.UTC().Format("2006-01-02 15:04:05")
+}
+
 func (e *ControlledExecutor) selectIDs(ctx context.Context, last string, limit int) ([]string, error) {
 	q := "SELECT `id` FROM `" + e.cfg.Schema + "`.`" + e.cfg.Table + "` WHERE `" + e.cfg.TimeColumn + "` < ?"
-	args := []any{e.cfg.CutoffUTC}
+	args := []any{e.cutoffArg()}
 	if last != "" {
 		q += " AND `id` > ?"
 		args = append(args, e.numericID(last))
@@ -237,7 +249,7 @@ func (e *ControlledExecutor) deleteIDs(ctx context.Context, ids []string, limit 
 		return 0, "begin", false, errors.New("controlled transaction unavailable")
 	}
 	defer func() { _ = tx.Rollback() }()
-	args := []any{e.cfg.CutoffUTC}
+	args := []any{e.cutoffArg()}
 	for _, id := range ids {
 		args = append(args, e.numericID(id))
 	}

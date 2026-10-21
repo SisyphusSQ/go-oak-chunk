@@ -28,15 +28,19 @@ unchanged.
 The executor selects an ascending primary-key chunk on the borrowed connection,
 closes the rows, synchronously calls `BeforeStatement`, and executes one
 transaction with one DELETE restricted to those ids and the same cutoff. Values
-and limits are bound parameters. Each statement's limit is the smaller of batch
-size and remaining row budget. Signed BIGINT and unsigned BIGINT ids are
+and limits are bound parameters. The cutoff is bound as a UTC datetime literal
+so the driver location cannot move the comparison onto another wall clock.
+Each statement's limit is the smaller of batch size and remaining row budget.
+Signed BIGINT and unsigned BIGINT ids are
 supported. Candidate and affected-row streams are validated.
 
 After a successful COMMIT, the cumulative committed count is updated before
 calling `AfterCommit` synchronously. An error in either hook stops the run; a
 receipt error does not undo the committed count. Limits are enforced before
-DML, not by treating a post-commit counter as a hard budget. The executor then
-waits for rows/rate with cancellation enabled; the caller must independently
+DML, not by treating a post-commit counter as a hard budget. When committed
+rows reach that budget, Run returns `budget_reached` and a nil error without
+waiting out the rate limit. Otherwise the executor waits for rows/rate with
+cancellation enabled; the caller must independently
 renew/check its execution lease during waits and queries. Hooks should finish
 within their supplied context; approval checks happen at the statement boundary
 and cannot revoke a transaction already committed.

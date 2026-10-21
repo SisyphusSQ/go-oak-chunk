@@ -38,6 +38,9 @@ type controlledState struct {
 	execErr, commitErr, rollbackErr, rowsErr error
 	zone                                     string
 	boundIDs                                 []any
+	loc                                      *time.Location
+	wantCutoff                               string
+	cutoffs                                  []string
 }
 
 var controlledSequence atomic.Int64
@@ -67,6 +70,9 @@ func (c *controlledConn) QueryContext(ctx context.Context, q string, args []driv
 	if !strings.HasPrefix(q, "SELECT `id` FROM `app`.`events` WHERE `ts` < ?") {
 		return nil, fmt.Errorf("unexpected query")
 	}
+	if err := c.state.observeCutoff(args[0].Value); err != nil {
+		return nil, err
+	}
 	limit := args[len(args)-1].Value.(int64)
 	n := min(int(limit), len(c.state.ids)-c.state.offset)
 	vals := make([][]driver.Value, n)
@@ -82,6 +88,9 @@ func (c *controlledConn) ExecContext(ctx context.Context, q string, args []drive
 	}
 	c.state.mu.Lock()
 	defer c.state.mu.Unlock()
+	if err := c.state.observeCutoff(args[0].Value); err != nil {
+		return nil, err
+	}
 	c.state.statements = append(c.state.statements, q)
 	limit := args[len(args)-1].Value.(int64)
 	c.state.limits = append(c.state.limits, limit)
@@ -119,7 +128,12 @@ func (r controlledResult) LastInsertId() (int64, error) { return 0, nil }
 func (r controlledResult) RowsAffected() (int64, error) { return r.n, r.err }
 func controlledFixture(t *testing.T) (*sql.Conn, *controlledState, ControlledConfig, ControlledHooks) {
 	t.Helper()
-	s := &controlledState{ids: []string{"-2", "0", "1", "4", "18446744073709551615", "18446744073709551616"}, zone: "+00:00"}
+	s := &controlledState{
+		ids:        []string{"-2", "0", "1", "4", "18446744073709551615", "18446744073709551616"},
+		zone:       "+00:00",
+		loc:        time.UTC,
+		wantCutoff: "2026-01-01 00:00:00",
+	}
 	name := fmt.Sprintf("controlled_%d", controlledSequence.Add(1))
 	sql.Register(name, controlledDriver{s})
 	db, err := sql.Open(name, "")
@@ -330,5 +344,125 @@ func TestControlledIntegerIDsStayNumericAtDriverBoundary(t *testing.T) {
 	}
 	if v, ok := s.boundIDs[1].(uint64); !ok || v != 18446744073709551615 {
 		t.Fatalf("unsigned id lost: %#v", s.boundIDs[1])
+	}
+}
+
+// controlledCutoffLiteral mirrors go-sql-driver: time.Time is formatted in the
+// DSN location, while a string is sent unchanged. Midnight UTC time.Time values
+// become a date-only literal, the same shortcut as appendDateTime.
+func controlledCutoffLiteral(v any, loc *time.Location) (string, error) {
+	if loc == nil {
+		loc = time.UTC
+	}
+	switch t := v.(type) {
+	case time.Time:
+		wall := t.In(loc)
+		if wall.Hour() == 0 && wall.Minute() == 0 && wall.Second() == 0 && wall.Nanosecond() == 0 {
+			return wall.Format("2006-01-02"), nil
+		}
+		return wall.Format("2006-01-02 15:04:05"), nil
+	case string:
+		return t, nil
+	case []byte:
+		return string(t), nil
+	default:
+		return "", fmt.Errorf("unexpected cutoff type %T", v)
+	}
+}
+
+func (s *controlledState) observeCutoff(v any) error {
+	got, err := controlledCutoffLiteral(v, s.loc)
+	if err != nil {
+		return err
+	}
+	s.cutoffs = append(s.cutoffs, got)
+	if got != s.wantCutoff {
+		return fmt.Errorf("cutoff boundary drifted to %s", got)
+	}
+	return nil
+}
+
+func TestControlledCutoffStaysUTCUnderDriverLocation(t *testing.T) {
+	conn, s, cfg, hooks := controlledFixture(t)
+	s.loc = time.FixedZone("UTC+8", 8*3600)
+	cfg.BatchSize = 3
+	cfg.MaxRows = 3
+	e, err := NewControlledExecutor(context.Background(), conn, cfg, hooks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := e.Run(context.Background())
+	if err != nil || result.CommittedRows != 3 || len(s.cutoffs) != 2 {
+		t.Fatalf("result=%+v err=%v cutoffs=%v", result, err, s.cutoffs)
+	}
+	for _, got := range s.cutoffs {
+		if got != s.wantCutoff {
+			t.Fatalf("effective cutoff %q, want %q", got, s.wantCutoff)
+		}
+	}
+}
+
+// signalCtx lets a test close Done after a batch has committed. Run's timeout
+// context adopts Err from the parent, so this can deliver either cancel or deadline.
+type signalCtx struct {
+	context.Context
+	done chan struct{}
+	mu   sync.Mutex
+	err  error
+}
+
+func newSignalCtx() *signalCtx {
+	return &signalCtx{Context: context.Background(), done: make(chan struct{})}
+}
+
+func (s *signalCtx) Done() <-chan struct{} { return s.done }
+func (s *signalCtx) Err() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-s.done:
+		return s.err
+	default:
+		return nil
+	}
+}
+func (s *signalCtx) fire(err error) {
+	s.mu.Lock()
+	s.err = err
+	select {
+	case <-s.done:
+		s.mu.Unlock()
+		return
+	default:
+	}
+	close(s.done)
+	s.mu.Unlock()
+}
+
+func TestControlledFullBudgetIgnoresInterruptedRateLimitWait(t *testing.T) {
+	for _, interrupt := range []error{context.Canceled, context.DeadlineExceeded} {
+		t.Run(interrupt.Error(), func(t *testing.T) {
+			conn, s, cfg, hooks := controlledFixture(t)
+			cfg.BatchSize = 3
+			cfg.MaxRows = 3
+			cfg.RowsPerSec = 1
+			cfg.MaxDuration = time.Hour
+			parent := newSignalCtx()
+			hooks.AfterCommit = func(context.Context, ControlledReceipt) error {
+				parent.fire(interrupt)
+				return nil
+			}
+			e, err := NewControlledExecutor(context.Background(), conn, cfg, hooks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := e.Run(parent)
+			if err != nil || result.Reason != ControlledBudgetReached || result.CommittedRows != 3 || result.OutcomeUnknown {
+				t.Fatalf("finished budget reported as failure: %+v err=%v", result, err)
+			}
+			if len(s.statements) != 1 || len(s.cutoffs) != 2 {
+				t.Fatalf("statements=%d cutoffs=%v", len(s.statements), s.cutoffs)
+			}
+		})
 	}
 }
