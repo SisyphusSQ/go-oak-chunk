@@ -1,3 +1,13 @@
+### v3.5.1(20261021)
+#### bugFix:
+1. 受控清理的截止时间改为绑定 UTC 日期时间字面量，避免驱动按 DSN `loc` 改写 `time.Time` 后，在 `time_zone=+00:00` 会话里删错时间范围
+2. 行预算已经删满后不再进入速率等待；这段等待被取消或超时时不再把成功跑完报成 `canceled`/`timeout`，而是返回 `budget_reached` 且无错误
+3. `NewControlledExecutor` 构造时只接受 InnoDB、单一整数主键 `id`、截止列为 datetime/timestamp 的表；本批影响行数少于候选 id 时回滚并停止，不推进键集游标
+4. 语句超时和取消（含 guard 返回的 context 错误）记为 `timeout`/`canceled`；DELETE 回滚得到 `sql.ErrTxDone` 不再标成结果未知。截止比较明确为严格小于（等于该 UTC 整秒的行保留）
+
+#### test:
+1. 合成驱动覆盖 UTC 截止字面量与非 UTC `loc`、数值键集游标、非法表形状拒绝、部分删除、超时/取消分类和已确认回滚
+
 ### v3.5.0(20261020)
 #### feature:
 1. 新增可选受控清理 SDK `NewControlledExecutor`：借用调用方持锁的单个 `sql.Conn`，按整数主键串行选取候选并分批 DELETE；不创建连接、不自动发现从库、不自动重试，不改变原有 `NewExecutor` 行为。
