@@ -16,7 +16,9 @@ import (
 // ControlledConfig is deliberately a typed DELETE plan, with no connection
 // credentials, raw SQL, automatic discovery, retries, or strategy fallback.
 type ControlledConfig struct {
-	Schema, Table, TimeColumn     string
+	Schema, Table, TimeColumn string
+	// CutoffUTC is an exclusive bound. A row is eligible only when
+	// TimeColumn < CutoffUTC. Rows on that exact UTC second are kept.
 	CutoffUTC                     time.Time
 	BatchSize                     int
 	MaxRows, RowsPerSec           int64
@@ -87,7 +89,72 @@ func NewControlledExecutor(ctx context.Context, conn *sql.Conn, cfg ControlledCo
 	if err := conn.QueryRowContext(op, "SELECT DATABASE(), @@session.time_zone").Scan(&schema, &zone); err != nil || schema != cfg.Schema || zone != "+00:00" {
 		return nil, errors.New("controlled session identity or UTC setting unavailable")
 	}
+	if err := verifyControlledTable(op, conn, cfg); err != nil {
+		return nil, err
+	}
 	return &ControlledExecutor{conn: conn, cfg: cfg, hooks: hooks, done: make(chan struct{})}, nil
+}
+
+// verifyControlledTable rejects shapes that make keyset pagination or
+// transactional rollback unsafe: a non-InnoDB engine, a primary key that is
+// not the single integer column id, or a cutoff column that is not datetime
+// or timestamp. The caller still holds the advisory lock.
+func verifyControlledTable(ctx context.Context, conn *sql.Conn, cfg ControlledConfig) error {
+	const q = "SELECT c.COLUMN_NAME, c.DATA_TYPE, c.COLUMN_KEY, t.ENGINE " +
+		"FROM information_schema.TABLES AS t " +
+		"JOIN information_schema.COLUMNS AS c " +
+		"ON c.TABLE_SCHEMA = t.TABLE_SCHEMA AND c.TABLE_NAME = t.TABLE_NAME " +
+		"WHERE t.TABLE_SCHEMA = ? AND t.TABLE_NAME = ?"
+	rows, err := conn.QueryContext(ctx, q, cfg.Schema, cfg.Table)
+	if err != nil {
+		return errors.New("controlled table metadata rejected")
+	}
+	defer rows.Close()
+	var engine, pkName, idType, timeType string
+	var pkCount int
+	for rows.Next() {
+		var name, dataType, columnKey, eng sql.NullString
+		if rows.Scan(&name, &dataType, &columnKey, &eng) != nil || !name.Valid || !dataType.Valid || !eng.Valid {
+			return errors.New("controlled table metadata rejected")
+		}
+		if engine == "" {
+			engine = eng.String
+		} else if !strings.EqualFold(engine, eng.String) {
+			return errors.New("controlled table metadata rejected")
+		}
+		if strings.EqualFold(columnKey.String, "PRI") {
+			pkCount++
+			pkName = name.String
+		}
+		if strings.EqualFold(name.String, "id") {
+			idType = dataType.String
+		}
+		if strings.EqualFold(name.String, cfg.TimeColumn) {
+			timeType = dataType.String
+		}
+	}
+	if rows.Err() != nil || pkCount != 1 || !strings.EqualFold(pkName, "id") || !strings.EqualFold(engine, "InnoDB") || !controlledIntegerType(idType) || !controlledTimeType(timeType) {
+		return errors.New("controlled table metadata rejected")
+	}
+	return nil
+}
+
+func controlledIntegerType(dataType string) bool {
+	switch strings.ToLower(dataType) {
+	case "tinyint", "smallint", "mediumint", "int", "bigint":
+		return true
+	default:
+		return false
+	}
+}
+
+func controlledTimeType(dataType string) bool {
+	switch strings.ToLower(dataType) {
+	case "datetime", "timestamp":
+		return true
+	default:
+		return false
+	}
 }
 
 func (e *ControlledExecutor) Run(ctx context.Context) (result ControlledResult, err error) {
@@ -127,8 +194,8 @@ func (e *ControlledExecutor) Run(ctx context.Context) (result ControlledResult, 
 		ids, readErr := e.selectIDs(op, lastID, limit)
 		stop()
 		if readErr != nil {
-			if runCtx.Err() != nil {
-				return e.contextFailure(result, runCtx)
+			if failed, failure, ok := e.contextOr(result, readErr, runCtx, "select"); ok {
+				return failed, failure
 			}
 			return e.failure(result, ControlledFailed, "select", false)
 		}
@@ -142,6 +209,9 @@ func (e *ControlledExecutor) Run(ctx context.Context) (result ControlledResult, 
 		guardErr := e.hooks.BeforeStatement(op, batch)
 		if guardErr != nil {
 			stop()
+			if reason, ok := controlledContextReason(guardErr); ok {
+				return e.failure(result, reason, "guard", false)
+			}
 			return e.failure(result, ControlledGuardDenied, "guard", false)
 		}
 		// Do not issue a new time budget after an authorization check. A paused
@@ -154,6 +224,11 @@ func (e *ControlledExecutor) Run(ctx context.Context) (result ControlledResult, 
 		affected, phase, unknown, writeErr := e.deleteIDs(op, ids, limit)
 		stop()
 		if writeErr != nil {
+			if !unknown {
+				if reason, ok := controlledContextReason(writeErr); ok {
+					return e.failure(result, reason, phase, false)
+				}
+			}
 			reason := ControlledFailed
 			if unknown {
 				reason = ControlledUnknown
@@ -169,6 +244,11 @@ func (e *ControlledExecutor) Run(ctx context.Context) (result ControlledResult, 
 			return e.failure(result, ControlledFailed, "receipt", false)
 		}
 		lastID = ids[len(ids)-1]
+		// The row budget is already satisfied. A rate-limit wait here can outlive
+		// the run context and would report timeout or cancel for a finished delete.
+		if result.CommittedRows >= e.cfg.MaxRows {
+			break
+		}
 		delay := time.Duration(affected) * time.Second / time.Duration(e.cfg.RowsPerSec)
 		timer := time.NewTimer(delay)
 		select {
@@ -182,9 +262,17 @@ func (e *ControlledExecutor) Run(ctx context.Context) (result ControlledResult, 
 	return result, nil
 }
 
+// cutoffArg is the approved UTC wall time. Bind a datetime literal rather than
+// time.Time: go-sql-driver reformats time.Time in the DSN loc before sending,
+// which moves the comparison off the UTC cutoff when loc is not UTC.
+func (e *ControlledExecutor) cutoffArg() string {
+	return e.cfg.CutoffUTC.UTC().Format("2006-01-02 15:04:05")
+}
+
 func (e *ControlledExecutor) selectIDs(ctx context.Context, last string, limit int) ([]string, error) {
+	// Exclusive cutoff: TimeColumn < cutoff. Rows equal to that UTC second are kept.
 	q := "SELECT `id` FROM `" + e.cfg.Schema + "`.`" + e.cfg.Table + "` WHERE `" + e.cfg.TimeColumn + "` < ?"
-	args := []any{e.cfg.CutoffUTC}
+	args := []any{e.cutoffArg()}
 	if last != "" {
 		q += " AND `id` > ?"
 		args = append(args, e.numericID(last))
@@ -193,7 +281,7 @@ func (e *ControlledExecutor) selectIDs(ctx context.Context, last string, limit i
 	args = append(args, limit)
 	rows, err := e.conn.QueryContext(ctx, q, args...)
 	if err != nil {
-		return nil, errors.New("controlled candidate read failed")
+		return nil, controlledPublicErr(err, "controlled candidate read failed")
 	}
 	defer rows.Close()
 	ids := make([]string, 0, limit)
@@ -204,8 +292,8 @@ func (e *ControlledExecutor) selectIDs(ctx context.Context, last string, limit i
 		}
 		ids = append(ids, id)
 	}
-	if rows.Err() != nil {
-		return nil, errors.New("controlled candidate read failed")
+	if err = rows.Err(); err != nil {
+		return nil, controlledPublicErr(err, "controlled candidate read failed")
 	}
 	return ids, nil
 }
@@ -234,30 +322,93 @@ func (e *ControlledExecutor) numericID(id string) any {
 func (e *ControlledExecutor) deleteIDs(ctx context.Context, ids []string, limit int) (int64, string, bool, error) {
 	tx, err := e.conn.BeginTx(ctx, nil)
 	if err != nil {
+		if _, ok := controlledContextReason(err); ok {
+			return 0, "begin", false, err
+		}
 		return 0, "begin", false, errors.New("controlled transaction unavailable")
 	}
 	defer func() { _ = tx.Rollback() }()
-	args := []any{e.cfg.CutoffUTC}
+	args := []any{e.cutoffArg()}
 	for _, id := range ids {
 		args = append(args, e.numericID(id))
 	}
 	args = append(args, limit)
+	// Same exclusive cutoff as the candidate read. LIMIT stops a bad IN list
+	// from deleting more rows than this batch, but every selected id must match.
 	q := "DELETE FROM `" + e.cfg.Schema + "`.`" + e.cfg.Table + "` WHERE `" + e.cfg.TimeColumn + "` < ? AND `id` IN (" + strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",") + ") LIMIT ?"
 	res, err := tx.ExecContext(ctx, q, args...)
 	if err != nil {
-		rollbackErr := tx.Rollback()
-		return 0, "execute", rollbackErr != nil, errors.New("controlled delete failed")
+		return e.rollbackDelete(tx, "execute", err)
 	}
 	affected, err := res.RowsAffected()
 	if err != nil || affected < 0 || affected > int64(limit) || affected > int64(len(ids)) {
-		rollbackErr := tx.Rollback()
-		return 0, "rows_affected", rollbackErr != nil, errors.New("controlled affected rows unavailable")
+		return e.rollbackDelete(tx, "rows_affected", errors.New("controlled affected rows unavailable"))
+	}
+	if affected != int64(len(ids)) {
+		// Do not commit a partial id set. The caller retries from the start;
+		// advancing the cursor would skip ids that are still eligible.
+		return e.rollbackDelete(tx, "affected", errors.New("controlled delete affected unexpected rows"))
 	}
 	if err = tx.Commit(); err != nil {
+		// database/sql returns a context error without sending COMMIT when the
+		// statement context is already done. A successful ROLLBACK confirms that.
+		// ErrTxDone here is not proof: Commit may already have marked the
+		// transaction finished before the driver returned.
+		if _, ok := controlledContextReason(err); ok && tx.Rollback() == nil {
+			return 0, "commit", false, err
+		}
 		return 0, "commit", true, errors.New("controlled commit outcome unknown")
 	}
 	return affected, "commit", false, nil
 }
+
+func (e *ControlledExecutor) rollbackDelete(tx *sql.Tx, phase string, cause error) (int64, string, bool, error) {
+	unknown := controlledRollbackUncertain(tx.Rollback())
+	if unknown {
+		return 0, phase, true, errors.New("controlled delete failed")
+	}
+	if _, ok := controlledContextReason(cause); ok {
+		return 0, phase, false, cause
+	}
+	return 0, phase, false, errors.New("controlled delete failed")
+}
+func controlledContextReason(err error) (ControlledReason, bool) {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return ControlledTimeout, true
+	case errors.Is(err, context.Canceled):
+		return ControlledCanceled, true
+	default:
+		return "", false
+	}
+}
+
+// controlledRollbackUncertain is false when ROLLBACK completed or the
+// transaction was already finished (sql.ErrTxDone). A finished transaction
+// here was rolled back by database/sql, not committed.
+func controlledRollbackUncertain(err error) bool {
+	return err != nil && !errors.Is(err, sql.ErrTxDone)
+}
+
+func controlledPublicErr(err error, fallback string) error {
+	if _, ok := controlledContextReason(err); ok {
+		return err
+	}
+	return errors.New(fallback)
+}
+
+func (e *ControlledExecutor) contextOr(r ControlledResult, err error, parent context.Context, phase string) (ControlledResult, error, bool) {
+	if reason, ok := controlledContextReason(err); ok {
+		failed, failure := e.failure(r, reason, phase, false)
+		return failed, failure, true
+	}
+	if parent != nil && parent.Err() != nil {
+		failed, failure := e.contextFailure(r, parent)
+		return failed, failure, true
+	}
+	return ControlledResult{}, nil, false
+}
+
 func (e *ControlledExecutor) failure(r ControlledResult, reason ControlledReason, phase string, unknown bool) (ControlledResult, error) {
 	r.Reason = reason
 	r.Phase = phase

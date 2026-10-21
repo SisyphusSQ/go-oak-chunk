@@ -11,9 +11,10 @@ unchanged.
 - Supply one dedicated `*sql.Conn` with its default schema selected and session
   time zone explicitly set to `+00:00`. Keep a table advisory lock on this same
   physical connection until execution has stopped. Do not concurrently use it.
-- Before constructing the executor, verify MySQL, InnoDB, a single integer `id`
-  primary key, the datetime/timestamp column, resource identity and any required
-  access plan. The controlled API does not certify metadata or approval.
+- Construction reads `information_schema` and rejects anything other than an
+  InnoDB table whose only primary key is the integer column `id` and whose
+  cutoff column is `datetime` or `timestamp`. The caller still owns the advisory
+  lock, approval and any access plan. The API does not certify those.
 - Perform bounded read-only prechecks separately. This API has no dry-run mode;
   calling `Run` is an actual DELETE operation. Ordinary executor dry-run behavior
   is a separate contract and must not replace an application precheck.
@@ -21,29 +22,43 @@ unchanged.
   ASCII identifiers of at most 64 characters. The cutoff must be a nonzero,
   whole-second UTC timestamp; batch size is 1–1000, total rows 1–1000000, rate
   1–10000 rows/sec, duration at most one hour, statement timeout at most five
-  seconds. The time column cannot be `id`.
+  seconds. The time column cannot be `id`. The cutoff comparison is strict:
+  `TimeColumn < CutoffUTC`. Rows equal to that UTC second are kept.
 
 ## Execution contract
 
 The executor selects an ascending primary-key chunk on the borrowed connection,
 closes the rows, synchronously calls `BeforeStatement`, and executes one
 transaction with one DELETE restricted to those ids and the same cutoff. Values
-and limits are bound parameters. Each statement's limit is the smaller of batch
-size and remaining row budget. Signed BIGINT and unsigned BIGINT ids are
+and limits are bound parameters. The cutoff is bound as a UTC datetime literal
+so the driver location cannot move the comparison onto another wall clock.
+Both the candidate read and the DELETE use that exclusive `<` bound.
+Each statement's limit is the smaller of batch size and remaining row budget.
+Signed BIGINT and unsigned BIGINT ids are
 supported. Candidate and affected-row streams are validated.
 
 After a successful COMMIT, the cumulative committed count is updated before
 calling `AfterCommit` synchronously. An error in either hook stops the run; a
-receipt error does not undo the committed count. Limits are enforced before
-DML, not by treating a post-commit counter as a hard budget. The executor then
-waits for rows/rate with cancellation enabled; the caller must independently
+receipt error does not undo the committed count and stays `failed`, because
+that batch is already committed. A guard error that is the statement context's
+cancel or deadline is `canceled` or `timeout`, not `guard_denied`. The DELETE
+is committed only when the affected-row count equals
+the selected id count. A smaller count is rolled back and the run stops as
+`failed` without moving the keyset cursor. Limits are enforced before
+DML, not by treating a post-commit counter as a hard budget. When committed
+rows reach that budget, Run returns `budget_reached` and a nil error without
+waiting out the rate limit. Otherwise the executor waits for rows/rate with
+cancellation enabled; the caller must independently
 renew/check its execution lease during waits and queries. Hooks should finish
 within their supplied context; approval checks happen at the statement boundary
 and cannot revoke a transaction already committed.
 
 No DML, COMMIT or ROLLBACK is automatically retried. Errors expose a fixed phase
 and reason without raw driver errors, SQL, bound values or connection material.
-Unconfirmed commit/rollback outcomes and unexpected panics carry
+A statement-context deadline or cancel, including one returned by the guard
+hook, is `timeout` or `canceled`. `sql.ErrTxDone` from a DELETE ROLLBACK means the
+transaction was already finished by a rollback, so it is not `outcome_unknown`.
+An unconfirmed COMMIT, a ROLLBACK that itself fails, and unexpected panics carry
 `OutcomeUnknown`. `CommittedRows` is the acknowledged count, not proof that an
 unknown transaction had no effect.
 
@@ -68,6 +83,8 @@ active ownership and block recovery when this proof is unavailable.
 
 `go test -race . -run TestControlled -count=1` uses a synthetic database/sql
 driver; it opens no network connections. It covers strict remaining budgets,
-bound SQL, signed/unsigned ids, synchronous guard/receipt errors, no retry after
-execution/commit/rollback failures, UTC and input admission, replay rejection,
-Stop/Wait and sanitized panic handling. Real MySQL acceptance is separate.
+numeric keyset cursors, exclusive cutoff literals under a non-UTC driver
+location, InnoDB integer-primary-key admission, partial-delete rollback,
+statement timeout versus guard denial, confirmed rollback versus unknown commit,
+bound SQL, signed/unsigned ids, synchronous guard/receipt errors, replay
+rejection, Stop/Wait and sanitized panic handling. Real MySQL acceptance is separate.
