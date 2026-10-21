@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +30,9 @@ type controlledResult struct {
 	n   int64
 	err error
 }
+type controlledColumn struct {
+	name, dataType, key string
+}
 type controlledState struct {
 	mu                                       sync.Mutex
 	ids                                      []string
@@ -41,6 +46,12 @@ type controlledState struct {
 	loc                                      *time.Location
 	wantCutoff                               string
 	cutoffs                                  []string
+	engine                                   string
+	columns                                  []controlledColumn
+	cursors                                  []string
+	blockSelect, blockDelete                 bool
+	useReported                              bool
+	reportedAffected                         int64
 }
 
 var controlledSequence atomic.Int64
@@ -67,19 +78,52 @@ func (c *controlledConn) QueryContext(ctx context.Context, q string, args []driv
 	if strings.Contains(q, "DATABASE()") {
 		return &controlledRows{cols: []string{"db", "zone"}, values: [][]driver.Value{{"app", c.state.zone}}}, nil
 	}
-	if !strings.HasPrefix(q, "SELECT `id` FROM `app`.`events` WHERE `ts` < ?") {
+	if strings.Contains(q, "information_schema") {
+		return c.state.metaRows(args)
+	}
+	if !strings.HasPrefix(q, "SELECT `id` FROM `app`.`events` WHERE `ts` < ?") || !strings.Contains(q, "ORDER BY `id`") || !strings.HasSuffix(q, "LIMIT ?") {
 		return nil, fmt.Errorf("unexpected query")
+	}
+	if c.state.blockSelect {
+		c.state.mu.Unlock()
+		<-ctx.Done()
+		err := ctx.Err()
+		c.state.mu.Lock()
+		return nil, err
 	}
 	if err := c.state.observeCutoff(args[0].Value); err != nil {
 		return nil, err
 	}
-	limit := args[len(args)-1].Value.(int64)
-	n := min(int(limit), len(c.state.ids)-c.state.offset)
-	vals := make([][]driver.Value, n)
-	for i := range vals {
-		vals[i] = []driver.Value{c.state.ids[c.state.offset+i]}
+	cursor := ""
+	var cursorN *big.Int
+	if strings.Contains(q, "`id` > ?") {
+		if len(args) < 3 {
+			return nil, fmt.Errorf("missing keyset cursor")
+		}
+		n, ok := controlledArgID(args[1].Value)
+		if !ok {
+			return nil, fmt.Errorf("bad keyset cursor")
+		}
+		cursorN = n
+		cursor = n.String()
 	}
-	c.state.offset += n
+	c.state.cursors = append(c.state.cursors, cursor)
+	limit := args[len(args)-1].Value.(int64)
+	ids := append([]string(nil), c.state.ids...)
+	sort.Slice(ids, func(i, j int) bool { return controlledLessID(ids[i], ids[j]) })
+	vals := make([][]driver.Value, 0, limit)
+	for _, id := range ids {
+		if cursorN != nil {
+			n, ok := new(big.Int).SetString(id, 10)
+			if !ok || n.Cmp(cursorN) <= 0 {
+				continue
+			}
+		}
+		vals = append(vals, []driver.Value{id})
+		if int64(len(vals)) == limit {
+			break
+		}
+	}
 	return &controlledRows{cols: []string{"id"}, values: vals}, nil
 }
 func (c *controlledConn) ExecContext(ctx context.Context, q string, args []driver.NamedValue) (driver.Result, error) {
@@ -87,7 +131,15 @@ func (c *controlledConn) ExecContext(ctx context.Context, q string, args []drive
 		return nil, err
 	}
 	c.state.mu.Lock()
+	if c.state.blockDelete {
+		c.state.mu.Unlock()
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	defer c.state.mu.Unlock()
+	if !strings.Contains(q, "`ts` < ?") || !strings.Contains(q, "`id` IN (") || !strings.HasSuffix(q, "LIMIT ?") || strings.Contains(q, "<=") {
+		return nil, fmt.Errorf("unbounded or inclusive delete: %s", q)
+	}
 	if err := c.state.observeCutoff(args[0].Value); err != nil {
 		return nil, err
 	}
@@ -100,7 +152,11 @@ func (c *controlledConn) ExecContext(ctx context.Context, q string, args []drive
 	if c.state.execErr != nil {
 		return nil, c.state.execErr
 	}
-	return controlledResult{int64(len(args) - 2), c.state.rowsErr}, nil
+	affected := int64(len(args) - 2)
+	if c.state.useReported {
+		affected = c.state.reportedAffected
+	}
+	return controlledResult{affected, c.state.rowsErr}, nil
 }
 func (t *controlledTx) Commit() error {
 	t.state.mu.Lock()
@@ -166,8 +222,8 @@ func TestControlledStrictBudgetAndReceipts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.CommittedRows != 5 || result.Reason != ControlledBudgetReached || fmt.Sprint(s.limits) != "[3 2]" || fmt.Sprint(receipts) != "[3 5]" {
-		t.Fatalf("result=%+v limits=%v receipts=%v", result, s.limits, receipts)
+	if result.CommittedRows != 5 || result.Reason != ControlledBudgetReached || fmt.Sprint(s.limits) != "[3 2]" || fmt.Sprint(receipts) != "[3 5]" || strings.Join(s.cursors, ",") != ",1" {
+		t.Fatalf("result=%+v limits=%v receipts=%v cursors=%q", result, s.limits, receipts, s.cursors)
 	}
 	for _, q := range s.statements {
 		if !strings.Contains(q, "`ts` < ? AND `id` IN (") || !strings.HasSuffix(q, "LIMIT ?") {
@@ -201,6 +257,9 @@ func TestControlledGuardAndReceiptFailuresStop(t *testing.T) {
 			want := 0
 			if phase == "receipt" {
 				want = 1
+			}
+			if phase == "guard" && result.Reason != ControlledGuardDenied {
+				t.Fatalf("denial classified as %+v", result)
 			}
 			if len(s.statements) != want || s.commits != want || result.CommittedRows != int64(want*3) {
 				t.Fatalf("continued after failure: %+v commits=%d", result, s.commits)
@@ -370,6 +429,49 @@ func controlledCutoffLiteral(v any, loc *time.Location) (string, error) {
 	}
 }
 
+func (s *controlledState) metaRows(args []driver.NamedValue) (driver.Rows, error) {
+	if len(args) != 2 || args[0].Value != "app" || args[1].Value != "events" {
+		return nil, fmt.Errorf("metadata target %#v", args)
+	}
+	engine := s.engine
+	if engine == "" {
+		engine = "InnoDB"
+	}
+	cols := s.columns
+	if cols == nil {
+		cols = []controlledColumn{{"id", "bigint", "PRI"}, {"ts", "datetime", ""}}
+	}
+	vals := make([][]driver.Value, len(cols))
+	for i, col := range cols {
+		vals[i] = []driver.Value{col.name, col.dataType, col.key, engine}
+	}
+	return &controlledRows{cols: []string{"name", "data_type", "key", "engine"}, values: vals}, nil
+}
+
+func controlledArgID(v any) (*big.Int, bool) {
+	switch t := v.(type) {
+	case int64:
+		return big.NewInt(t), true
+	case uint64:
+		return new(big.Int).SetUint64(t), true
+	case string:
+		return new(big.Int).SetString(t, 10)
+	case []byte:
+		return new(big.Int).SetString(string(t), 10)
+	default:
+		return nil, false
+	}
+}
+
+func controlledLessID(a, b string) bool {
+	ai, aok := new(big.Int).SetString(a, 10)
+	bi, bok := new(big.Int).SetString(b, 10)
+	if !aok || !bok {
+		return a < b
+	}
+	return ai.Cmp(bi) < 0
+}
+
 func (s *controlledState) observeCutoff(v any) error {
 	got, err := controlledCutoffLiteral(v, s.loc)
 	if err != nil {
@@ -464,5 +566,164 @@ func TestControlledFullBudgetIgnoresInterruptedRateLimitWait(t *testing.T) {
 				t.Fatalf("statements=%d cutoffs=%v", len(s.statements), s.cutoffs)
 			}
 		})
+	}
+}
+
+func TestControlledKeysetFollowsNumericOrder(t *testing.T) {
+	conn, s, cfg, hooks := controlledFixture(t)
+	s.ids = []string{"2", "1", "3"}
+	cfg.BatchSize = 1
+	cfg.MaxRows = 3
+	e, err := NewControlledExecutor(context.Background(), conn, cfg, hooks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := e.Run(context.Background())
+	if err != nil || result.Reason != ControlledBudgetReached || result.CommittedRows != 3 {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if strings.Join(s.cursors, ",") != ",1,2" {
+		t.Fatalf("cursors %q", s.cursors)
+	}
+	got := make([]string, len(s.boundIDs))
+	for i, id := range s.boundIDs {
+		got[i] = fmt.Sprint(id)
+	}
+	if strings.Join(got, ",") != "1,2,3" {
+		t.Fatalf("deleted %v", s.boundIDs)
+	}
+}
+
+func TestControlledPartialDeleteDoesNotAdvance(t *testing.T) {
+	conn, s, cfg, hooks := controlledFixture(t)
+	s.useReported = true
+	s.reportedAffected = 1
+	cfg.BatchSize = 3
+	cfg.MaxRows = 9
+	e, err := NewControlledExecutor(context.Background(), conn, cfg, hooks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := e.Run(context.Background())
+	if err == nil || result.Reason != ControlledFailed || result.Phase != "affected" || result.OutcomeUnknown || result.CommittedRows != 0 {
+		t.Fatalf("partial delete continued: %+v err=%v", result, err)
+	}
+	if len(s.statements) != 1 || s.commits != 0 || len(s.cursors) != 1 {
+		t.Fatalf("statements=%d commits=%d cursors=%q", len(s.statements), s.commits, s.cursors)
+	}
+}
+
+func TestControlledRejectsUnsafeTableShape(t *testing.T) {
+	cases := []struct {
+		name    string
+		engine  string
+		columns []controlledColumn
+	}{
+		{name: "myisam", engine: "MyISAM"},
+		{name: "varchar id", columns: []controlledColumn{{"id", "varchar", "PRI"}, {"ts", "datetime", ""}}},
+		{name: "id not pk", columns: []controlledColumn{{"id", "bigint", "MUL"}, {"pk", "bigint", "PRI"}, {"ts", "datetime", ""}}},
+		{name: "composite pk", columns: []controlledColumn{{"id", "bigint", "PRI"}, {"k", "int", "PRI"}, {"ts", "datetime", ""}}},
+		{name: "numeric time", columns: []controlledColumn{{"id", "int", "PRI"}, {"ts", "int", ""}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conn, s, cfg, hooks := controlledFixture(t)
+			s.engine = tc.engine
+			if tc.columns != nil {
+				s.columns = tc.columns
+			}
+			if _, err := NewControlledExecutor(context.Background(), conn, cfg, hooks); err == nil {
+				t.Fatal("unsafe table admitted")
+			}
+		})
+	}
+}
+
+func TestControlledAcceptsIntegerPKAndTimestamp(t *testing.T) {
+	conn, s, cfg, hooks := controlledFixture(t)
+	s.columns = []controlledColumn{{"ID", "bigint", "PRI"}, {"ts", "timestamp", ""}}
+	if _, err := NewControlledExecutor(context.Background(), conn, cfg, hooks); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestControlledStatementTimeoutIsTimeout(t *testing.T) {
+	for _, phase := range []string{"select", "delete"} {
+		t.Run(phase, func(t *testing.T) {
+			conn, s, cfg, hooks := controlledFixture(t)
+			cfg.StatementTimeout = 20 * time.Millisecond
+			cfg.MaxDuration = time.Hour
+			if phase == "select" {
+				s.blockSelect = true
+			} else {
+				s.blockDelete = true
+			}
+			e, err := NewControlledExecutor(context.Background(), conn, cfg, hooks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := e.Run(context.Background())
+			wantPhase := "select"
+			if phase == "delete" {
+				wantPhase = "execute"
+			}
+			if err == nil || result.Reason != ControlledTimeout || result.Phase != wantPhase || result.OutcomeUnknown || result.CommittedRows != 0 {
+				t.Fatalf("timeout classified as %+v err=%v", result, err)
+			}
+		})
+	}
+}
+
+func TestControlledGuardContextIsNotDenial(t *testing.T) {
+	for _, interrupt := range []error{context.Canceled, context.DeadlineExceeded} {
+		t.Run(interrupt.Error(), func(t *testing.T) {
+			conn, _, cfg, hooks := controlledFixture(t)
+			cfg.MaxDuration = time.Hour
+			cfg.StatementTimeout = time.Second
+			parent := newSignalCtx()
+			if interrupt == context.DeadlineExceeded {
+				cfg.StatementTimeout = 20 * time.Millisecond
+				hooks.BeforeStatement = func(ctx context.Context, _ ControlledBatch) error {
+					<-ctx.Done()
+					return ctx.Err()
+				}
+			} else {
+				hooks.BeforeStatement = func(ctx context.Context, _ ControlledBatch) error {
+					parent.fire(context.Canceled)
+					<-ctx.Done()
+					return ctx.Err()
+				}
+			}
+			e, err := NewControlledExecutor(context.Background(), conn, cfg, hooks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runCtx := context.Context(parent)
+			if interrupt == context.DeadlineExceeded {
+				runCtx = context.Background()
+			}
+			result, err := e.Run(runCtx)
+			want := ControlledCanceled
+			if interrupt == context.DeadlineExceeded {
+				want = ControlledTimeout
+			}
+			if err == nil || result.Reason != want || result.Phase != "guard" || result.OutcomeUnknown {
+				t.Fatalf("guard context classified as %+v err=%v", result, err)
+			}
+		})
+	}
+}
+
+func TestControlledConfirmedRollbackIsNotUnknown(t *testing.T) {
+	conn, s, cfg, hooks := controlledFixture(t)
+	s.execErr = io.EOF
+	s.rollbackErr = sql.ErrTxDone
+	e, err := NewControlledExecutor(context.Background(), conn, cfg, hooks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := e.Run(context.Background())
+	if err == nil || result.OutcomeUnknown || result.Reason != ControlledFailed || result.Phase != "execute" || s.commits != 0 {
+		t.Fatalf("confirmed rollback marked unknown: %+v err=%v commits=%d", result, err, s.commits)
 	}
 }
