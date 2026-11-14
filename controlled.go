@@ -34,6 +34,9 @@ type ControlledReceipt struct {
 	AffectedRows, CommittedRows int64
 }
 type ControlledHooks struct {
+	// BeforeBatch optionally prepares audit/metadata using the run deadline.
+	// It grants no write authority: BeforeStatement still gates each DELETE.
+	BeforeBatch     func(context.Context, ControlledBatch) error
 	BeforeStatement func(context.Context, ControlledBatch) error
 	AfterCommit     func(context.Context, ControlledReceipt) error
 }
@@ -204,6 +207,17 @@ func (e *ControlledExecutor) Run(ctx context.Context) (result ControlledResult, 
 			return result, nil
 		}
 		batch := ControlledBatch{Number: result.Batches + 1, Limit: limit, CommittedRows: result.CommittedRows}
+		if e.hooks.BeforeBatch != nil {
+			if prepareErr := e.hooks.BeforeBatch(runCtx, batch); prepareErr != nil {
+				if failed, failure, ok := e.contextOr(result, prepareErr, runCtx, "prepare"); ok {
+					return failed, failure
+				}
+				return e.failure(result, ControlledGuardDenied, "prepare", false)
+			}
+			if runCtx.Err() != nil {
+				return e.contextFailure(result, runCtx)
+			}
+		}
 		// Hooks are synchronous and cannot be skipped by a busy progress callback.
 		op, stop = context.WithTimeout(runCtx, e.cfg.StatementTimeout)
 		guardErr := e.hooks.BeforeStatement(op, batch)

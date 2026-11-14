@@ -27,6 +27,14 @@ unchanged.
 
 ## Execution contract
 
+An optional synchronous `BeforeBatch` hook runs after selecting each nonempty
+chunk, using the overall run context for audit preparation and metadata waits.
+Preparation failure or cancellation stops before the write guard. It grants no
+authority to write: the required `BeforeStatement` still runs afterward, sharing
+one statement deadline with the DELETE. Callers must revalidate current approval
+and lease there; a slow preparation must never supply a cached authorization.
+Omitting `BeforeBatch` preserves the existing execution sequence.
+
 The executor selects an ascending primary-key chunk on the borrowed connection,
 closes the rows, synchronously calls `BeforeStatement`, and executes one
 transaction with one DELETE restricted to those ids and the same cutoff. Values
