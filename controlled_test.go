@@ -237,6 +237,53 @@ func TestControlledStrictBudgetAndReceipts(t *testing.T) {
 		t.Fatal("executor replay allowed")
 	}
 }
+func TestControlledPreparationBudgetAndFreshGuard(t *testing.T) {
+	for _, mode := range []string{"slow", "denied", "canceled", "expired guard"} {
+		t.Run(mode, func(t *testing.T) {
+			conn, state, cfg, hooks := controlledFixture(t)
+			cfg.StatementTimeout = 10 * time.Millisecond
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			prepared, guarded := 0, 0
+			hooks.BeforeBatch = func(ctx context.Context, batch ControlledBatch) error {
+				prepared++
+				if batch.Number != prepared {
+					t.Fatal("batch order changed")
+				}
+				switch mode {
+				case "denied":
+					return errors.New("private preparation error")
+				case "canceled":
+					cancel()
+					return nil
+				default:
+					time.Sleep(20 * time.Millisecond)
+					return ctx.Err()
+				}
+			}
+			hooks.BeforeStatement = func(ctx context.Context, _ ControlledBatch) error {
+				guarded++
+				if mode == "expired guard" {
+					<-ctx.Done()
+				}
+				return nil
+			}
+			executor, err := NewControlledExecutor(ctx, conn, cfg, hooks)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := executor.Run(ctx)
+			if mode == "slow" {
+				if err != nil || result.CommittedRows != 5 || prepared != 2 || guarded != 2 {
+					t.Fatalf("preparation failed: %+v %v", result, err)
+				}
+			} else if err == nil || len(state.statements) != 0 || result.CommittedRows != 0 || result.OutcomeUnknown {
+				t.Fatalf("failed preparation/guard allowed write: %+v %v", result, err)
+			}
+		})
+	}
+}
+
 func TestControlledGuardAndReceiptFailuresStop(t *testing.T) {
 	for _, phase := range []string{"guard", "receipt"} {
 		t.Run(phase, func(t *testing.T) {
